@@ -373,7 +373,19 @@ export class PDFService {
                     doc.link(x, y, cellW, cellH, { pageNumber: pageMap.days[dKey] });
                 }
                 
-                const dayEvents = events.filter(e => getTzDateStr(e.start) === format(d, 'yyyy-MM-dd'));
+                const currentDayStr = format(d, 'yyyy-MM-dd');
+                const dayEvents = events.filter(e => {
+                    const startStr = getTzDateStr(e.start);
+                    const endStr = getTzDateStr(e.end);
+                    const duration = e.end.getTime() - e.start.getTime();
+                    const isMidnight = parseInt(formatInTimeZone(e.start, tz, 'H')) === 0 && parseInt(formatInTimeZone(e.start, tz, 'm')) === 0;
+                    const isAllDay = e.allDay || duration >= 86400000 || isMidnight;
+
+                    if (isAllDay) {
+                        return currentDayStr >= startStr && currentDayStr < endStr;
+                    }
+                    return startStr === currentDayStr;
+                });
                 let eventY = y + 8;
                 doc.setFontSize(5);
                 doc.setTextColor(0);
@@ -440,7 +452,19 @@ export class PDFService {
                      doc.link(x, y, cellW, 8, { pageNumber: pageMap.days[dKey] });
                  }
                  
-                 const dayEvents = events.filter(e => getTzDateStr(e.start) === format(d, 'yyyy-MM-dd'));
+                 const currentDayStr = format(d, 'yyyy-MM-dd');
+                 const dayEvents = events.filter(e => {
+                     const startStr = getTzDateStr(e.start);
+                     const endStr = getTzDateStr(e.end);
+                     const duration = e.end.getTime() - e.start.getTime();
+                     const isMidnight = parseInt(formatInTimeZone(e.start, tz, 'H')) === 0 && parseInt(formatInTimeZone(e.start, tz, 'm')) === 0;
+                     const isAllDay = e.allDay || duration >= 86400000 || isMidnight;
+
+                     if (isAllDay) {
+                         return currentDayStr >= startStr && currentDayStr < endStr;
+                     }
+                     return startStr === currentDayStr;
+                 });
                  let eventY = y + 12;
                  doc.setFontSize(6);
                  doc.setFont("helvetica", "normal");
@@ -493,10 +517,20 @@ export class PDFService {
         doc.setTextColor(150);
         doc.text("All day", 7, contentY + 6); 
         
+        const currentDayStr = format(day, 'yyyy-MM-dd');
         const allDayEvents = events.filter(e => {
+            const startStr = getTzDateStr(e.start);
+            const endStr = getTzDateStr(e.end);
+            
+            // An event is "All Day" if it's marked as such, or spans >= 24h, or starts at midnight
             const duration = e.end.getTime() - e.start.getTime();
             const isMidnight = parseInt(formatInTimeZone(e.start, tz, 'H')) === 0 && parseInt(formatInTimeZone(e.start, tz, 'm')) === 0;
-            return getTzDateStr(e.start) === format(day, 'yyyy-MM-dd') && (duration >= 86400000 || isMidnight);
+            const isAllDayType = e.allDay || duration >= 86400000 || isMidnight;
+            
+            if (!isAllDayType) return false;
+            
+            // Check if current day falls within the event's range [start, end)
+            return currentDayStr >= startStr && currentDayStr < endStr;
         });
         
         let adX = 35; 
@@ -543,10 +577,17 @@ export class PDFService {
         }
         
         const dayEvents = events.filter(e => {
+            const startStr = getTzDateStr(e.start);
+            const endStr = getTzDateStr(e.end);
+            
             const duration = e.end.getTime() - e.start.getTime();
             const isMidnight = parseInt(formatInTimeZone(e.start, tz, 'H')) === 0 && parseInt(formatInTimeZone(e.start, tz, 'm')) === 0;
-            if (duration >= 86400000 || isMidnight) return false;
-            return getTzDateStr(e.start) === format(day, 'yyyy-MM-dd');
+            
+            // If it's an all-day event, it's already handled in the top section
+            if (e.allDay || duration >= 86400000 || isMidnight) return false;
+            
+            // For regular events, they only appear on their start day in the schedule
+            return startStr === currentDayStr;
         });
         
         const items = dayEvents.map(e => {
