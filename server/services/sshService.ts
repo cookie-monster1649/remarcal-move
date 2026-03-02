@@ -4,9 +4,9 @@ import * as path from 'path';
 import * as crypto from 'crypto';
 
 export interface SSHConfig {
-  host: string;
-  username: string; // usually 'root'
-  privateKey?: string; // PEM format
+  host?: string;
+  username?: string;
+  privateKey?: string;
   passphrase?: string;
   password?: string;
 }
@@ -20,27 +20,36 @@ export interface DeviceFile {
 export class SSHService {
   private config: SSHConfig;
 
-  constructor(config: SSHConfig) {
+  constructor(config: SSHConfig = {}) {
     this.config = config;
   }
 
+  private getConfig() {
+    return {
+      host: this.config.host || process.env.REMARKABLE_HOST,
+      port: parseInt(process.env.REMARKABLE_PORT || '22', 10),
+      username: this.config.username || process.env.REMARKABLE_USER || 'root',
+      privateKey: this.config.privateKey || (process.env.REMARKABLE_SSH_KEY_PATH ? fs.readFileSync(process.env.REMARKABLE_SSH_KEY_PATH, 'utf8') : undefined),
+      passphrase: this.config.passphrase,
+      password: this.config.password,
+    };
+  }
+
   private async connect(): Promise<Client> {
+    const config = this.getConfig();
+    if (!config.host) throw new Error('SSH Host not configured');
+
     return new Promise((resolve, reject) => {
       const conn = new Client();
       conn.on('ready', () => resolve(conn))
           .on('error', (err) => reject(err))
           .connect({
-            host: this.config.host,
-            port: 22,
-            username: this.config.username,
-            privateKey: this.config.privateKey,
-            passphrase: this.config.passphrase,
-            password: this.config.password,
-            // Strict host checking requires known_hosts management. 
-            // For this MVP, we'll accept new keys but warn (or implement a simple trust-on-first-use if needed).
-            // In a real app, we'd persist known_hosts.
-            // For now, we'll disable strict checking to ensure connectivity in this demo environment, 
-            // but in production code we'd verify the host key.
+            host: config.host,
+            port: config.port,
+            username: config.username,
+            privateKey: config.privateKey,
+            passphrase: config.passphrase,
+            password: config.password,
             readyTimeout: 20000,
           });
     });
@@ -63,7 +72,6 @@ export class SSHService {
             return reject(err);
           }
 
-          // Filter for .metadata files
           const metadataFiles = list.filter(f => f.filename.endsWith('.metadata'));
           const documents: DeviceFile[] = [];
           let processed = 0;
@@ -78,14 +86,10 @@ export class SSHService {
             const uuid = file.filename.replace('.metadata', '');
             const metadataPath = path.join(basePath, file.filename);
 
-            // Read metadata content to get the display name
             sftp.readFile(metadataPath, (err, buffer) => {
               if (!err) {
                 try {
                   const meta = JSON.parse(buffer.toString());
-                  // Only include if it's a PDF-backed document (optional check, but good for safety)
-                  // Actually, we might want to overwrite notebooks too if they are just PDFs underneath?
-                  // Usually we look for "visibleName".
                   if (meta.visibleName) {
                      documents.push({
                        uuid,
@@ -110,97 +114,16 @@ export class SSHService {
     });
   }
 
-  async backupDocument(uuid: string, backupDir: string): Promise<string> {
-    const conn = await this.connect();
-    const basePath = '/home/root/.local/share/remarkable/xochitl/';
-    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const specificBackupDir = path.join(backupDir, `${uuid}_${timestamp}`);
-
-    if (!fs.existsSync(specificBackupDir)) {
-      fs.mkdirSync(specificBackupDir, { recursive: true });
+  async uploadPDF(remotePath: string, localPdfPath: string): Promise<void> {
+    const isDryRun = process.env.SYNC_DRY_RUN === 'true';
+    if (isDryRun) {
+        console.log(`[DRY RUN] Would upload ${localPdfPath} to ${remotePath}`);
+        return;
     }
 
-    return new Promise((resolve, reject) => {
-      conn.sftp((err, sftp) => {
-        if (err) {
-          conn.end();
-          return reject(err);
-        }
-
-        const filesToBackup = [
-          `${uuid}.content`,
-          `${uuid}.pagedata`,
-          `${uuid}.pdf`, // The original PDF
-          `${uuid}.metadata`
-        ];
-
-        let completed = 0;
-        let hasError = false;
-
-        // 1. Backup metadata files
-        const backupFile = (filename: string, cb: () => void) => {
-            const remotePath = path.join(basePath, filename);
-            const localPath = path.join(specificBackupDir, filename);
-            
-            sftp.fastGet(remotePath, localPath, (err) => {
-                if (err) {
-                    // It's possible .pdf doesn't exist if it's a notebook, but we expect it for PDF replacement workflow.
-                    console.warn(`Failed to backup ${filename}: ${err.message}`);
-                }
-                cb();
-            });
-        };
-
-        // 2. Backup strokes directory (recursively? sftp doesn't do recursive easily)
-        // For MVP, let's just backup the main files. Backing up the directory requires listing it and downloading each file.
-        // Let's implement directory backup.
-        const backupStrokes = (cb: () => void) => {
-            const remoteDir = path.join(basePath, uuid);
-            const localDir = path.join(specificBackupDir, uuid);
-            
-            if (!fs.existsSync(localDir)) fs.mkdirSync(localDir);
-
-            sftp.readdir(remoteDir, (err, list) => {
-                if (err) {
-                    // Directory might not exist if no strokes
-                    cb();
-                    return;
-                }
-
-                let fileCount = 0;
-                if (list.length === 0) {
-                    cb();
-                    return;
-                }
-
-                list.forEach(f => {
-                    sftp.fastGet(path.join(remoteDir, f.filename), path.join(localDir, f.filename), (err) => {
-                        fileCount++;
-                        if (fileCount === list.length) cb();
-                    });
-                });
-            });
-        };
-
-        // Execute backups
-        let pending = filesToBackup.length + 1; // +1 for strokes dir
-        const checkDone = () => {
-            pending--;
-            if (pending === 0) {
-                conn.end();
-                resolve(specificBackupDir);
-            }
-        };
-
-        filesToBackup.forEach(f => backupFile(f, checkDone));
-        backupStrokes(checkDone);
-      });
-    });
-  }
-
-  async uploadPDF(uuid: string, localPdfPath: string): Promise<void> {
     const conn = await this.connect();
-    const remotePath = `/home/root/.local/share/remarkable/xochitl/${uuid}.pdf`;
+    const tempPath = `${remotePath}.tmp`;
+    const backupEnabled = process.env.SYNC_BACKUP_REMOTE === 'true';
 
     return new Promise((resolve, reject) => {
       conn.sftp((err, sftp) => {
@@ -209,72 +132,60 @@ export class SSHService {
             return reject(err);
         }
 
-        sftp.fastPut(localPdfPath, remotePath, (err) => {
-            conn.end();
-            if (err) reject(err);
-            else resolve();
+        // 1. Upload to temp file
+        sftp.fastPut(localPdfPath, tempPath, (err) => {
+            if (err) {
+                conn.end();
+                return reject(err);
+            }
+
+            // 2. Verify (Size check for simplicity, hash would require reading back or running sha256sum on remote)
+            const localHash = crypto.createHash('sha256').update(fs.readFileSync(localPdfPath)).digest('hex');
+
+            conn.exec(`sha256sum ${tempPath}`, (err, stream) => {
+                if (err) {
+                    conn.end();
+                    return reject(err);
+                }
+                let output = '';
+                stream.on('data', (data: any) => output += data.toString());
+                stream.on('close', () => {
+                    const remoteHash = output.split(' ')[0];
+                    if (remoteHash !== localHash) {
+                        conn.end();
+                        return reject(new Error(`Hash mismatch: Local ${localHash} vs Remote ${remoteHash}`));
+                    }
+
+                    // 3. Optional Backup
+                    const doRename = () => {
+                        sftp.rename(tempPath, remotePath, (err) => {
+                            conn.end();
+                            if (err) reject(err);
+                            else resolve();
+                        });
+                    };
+
+                    if (backupEnabled) {
+                        const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+                        const backupPath = `${remotePath}.bak.${timestamp}`;
+                        // Check if remote file exists first
+                        sftp.stat(remotePath, (err, stats) => {
+                            if (!err && stats) {
+                                sftp.rename(remotePath, backupPath, (err) => {
+                                    if (err) console.warn('Backup failed, proceeding with overwrite:', err);
+                                    doRename();
+                                });
+                            } else {
+                                doRename();
+                            }
+                        });
+                    } else {
+                        doRename();
+                    }
+                });
+            });
         });
       });
     });
-  }
-  
-  // Helper to validate PDF page count match (requires reading .content file)
-  async validatePageCount(uuid: string, newPdfPageCount: number): Promise<boolean> {
-      const conn = await this.connect();
-      const remoteContentPath = `/home/root/.local/share/remarkable/xochitl/${uuid}.content`;
-      
-      return new Promise((resolve, reject) => {
-          conn.sftp((err, sftp) => {
-              if (err) {
-                  conn.end();
-                  return reject(err);
-              }
-              
-              sftp.readFile(remoteContentPath, (err, buffer) => {
-                  conn.end();
-                  if (err) return reject(err);
-                  
-                  try {
-                      const content = JSON.parse(buffer.toString());
-                      // .content file has "pages" array or "pageCount"
-                      // Usually "pages": ["uuid", "uuid", ...]
-                      const existingPages = content.pages ? content.pages.length : (content.pageCount || 0);
-                      
-                      // Check if match
-                      // Note: We might allow new PDF to have MORE pages, but definitely not fewer if we want to preserve strokes on later pages.
-                      // Strict equality is safest for "update in place".
-                      resolve(existingPages === newPdfPageCount);
-                  } catch (e) {
-                      reject(e);
-                  }
-              });
-          });
-      });
-  }
-
-  async restoreDocument(uuid: string, backupDir: string): Promise<void> {
-      const conn = await this.connect();
-      const basePath = '/home/root/.local/share/remarkable/xochitl/';
-      const pdfPath = path.join(backupDir, `${uuid}.pdf`);
-      
-      if (!fs.existsSync(pdfPath)) {
-          conn.end();
-          throw new Error('Backup PDF not found');
-      }
-
-      return new Promise((resolve, reject) => {
-          conn.sftp((err, sftp) => {
-              if (err) {
-                  conn.end();
-                  return reject(err);
-              }
-              
-              sftp.fastPut(pdfPath, path.join(basePath, `${uuid}.pdf`), (err) => {
-                  conn.end();
-                  if (err) reject(err);
-                  else resolve();
-              });
-          });
-      });
   }
 }

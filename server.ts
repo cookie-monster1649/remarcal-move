@@ -1,23 +1,39 @@
 import express from 'express';
 import { createServer as createViteServer } from 'vite';
 import cors from 'cors';
-import calDavRoutes from './server/routes/caldav.js';
-import deviceRoutes from './server/routes/device.js';
+import { initDb } from './server/db.js';
+import { initEncryption } from './server/services/encryptionService.js';
+import { schedulerService } from './server/services/schedulerService.js';
+import libraryRoutes from './server/routes/library.js';
+import settingsRoutes from './server/routes/settings.js';
+import { basicAuth } from './server/middleware/auth.js';
 
 async function startServer() {
+  // Initialize services
+  try {
+    initEncryption();
+    initDb();
+    schedulerService.init();
+  } catch (err: any) {
+    console.error('Failed to initialize application:', err.message);
+    process.exit(1);
+  }
+
   const app = express();
   const PORT = 3000;
 
   app.use(cors());
   app.use(express.json());
 
-  // API Routes
+  // API Routes (Authenticated)
+  app.use('/api', basicAuth);
+  
   app.get('/api/health', (req, res) => {
     res.json({ status: 'ok' });
   });
 
-  app.use('/api/caldav', calDavRoutes);
-  app.use('/api/device', deviceRoutes);
+  app.use('/api/library', libraryRoutes);
+  app.use('/api/settings', settingsRoutes);
 
   // Vite middleware
   if (process.env.NODE_ENV !== 'production') {
@@ -27,8 +43,12 @@ async function startServer() {
     });
     app.use(vite.middlewares);
   } else {
-    // In production, serve static files (setup would go here)
+    // In production, serve static files
     app.use(express.static('dist'));
+    // Fallback to index.html for SPA routing
+    app.get('*', (req, res) => {
+        res.sendFile('index.html', { root: 'dist' });
+    });
   }
 
   app.listen(PORT, '0.0.0.0', () => {
