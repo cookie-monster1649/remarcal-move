@@ -252,10 +252,17 @@ export class CalDavService {
             
             let startDate = event.startDate.toJSDate();
             let endDate = event.endDate.toJSDate();
+            
+            // Skip invalid dates
+            if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
+              console.warn('Skipping event with invalid date:', summary);
+              continue;
+            }
+
             const isAllDay = event.startDate.isDate;
             
             // Get the timezone of the event itself
-            const eventTz = event.startDate.zone.tzid;
+            const eventTz = event.startDate.zone ? event.startDate.zone.tzid : undefined;
             if (eventTz && !calendarTimezone) {
               calendarTimezone = eventTz;
             }

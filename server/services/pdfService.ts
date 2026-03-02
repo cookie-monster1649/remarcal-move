@@ -18,15 +18,52 @@ export interface PDFConfig {
 
 export class PDFService {
   generate(events: CalendarEvent[], config: PDFConfig): Buffer {
-    const tz = config.timezone || 'UTC';
+    let tz = config.timezone || 'UTC';
+    
+    // Normalize UTC offsets (e.g., UTC+11 -> +11:00)
+    if (tz.startsWith('UTC')) {
+        const offset = tz.substring(3).trim();
+        if (!offset) {
+            tz = 'UTC';
+        } else {
+            let normalized = offset;
+            if (!normalized.startsWith('+') && !normalized.startsWith('-')) {
+                normalized = '+' + normalized;
+            }
+            if (!normalized.includes(':')) {
+                normalized += ':00';
+            }
+            tz = normalized;
+        }
+    }
     
     // Helper to get date string in target timezone
-    const getTzDateStr = (date: Date) => formatInTimeZone(date, tz, 'yyyy-MM-dd');
-    const getTzTimeStr = (date: Date) => formatInTimeZone(date, tz, 'HH:mm');
+    const getTzDateStr = (date: Date) => {
+        if (!date || isNaN(date.getTime())) return 'invalid-date';
+        try {
+            return formatInTimeZone(date, tz, 'yyyy-MM-dd');
+        } catch (e) {
+            console.error(`Error formatting date in timezone ${tz}:`, e);
+            return 'invalid-date';
+        }
+    };
+    const getTzTimeStr = (date: Date) => {
+        if (!date || isNaN(date.getTime())) return '00:00';
+        try {
+            return formatInTimeZone(date, tz, 'HH:mm');
+        } catch (e) {
+            return '00:00';
+        }
+    };
     const getTzHour = (date: Date) => {
-        const h = parseInt(formatInTimeZone(date, tz, 'H'));
-        const m = parseInt(formatInTimeZone(date, tz, 'm'));
-        return h + m / 60;
+        if (!date || isNaN(date.getTime())) return 0;
+        try {
+            const h = parseInt(formatInTimeZone(date, tz, 'H'));
+            const m = parseInt(formatInTimeZone(date, tz, 'm'));
+            return h + m / 60;
+        } catch (e) {
+            return 0;
+        }
     };
 
     // 1. Setup Dimensions & Constants
