@@ -92,7 +92,7 @@ export class SyncService {
         };
         
         const deviceSshService = new SSHService(sshConfig);
-        await deviceSshService.uploadPDF(doc.remote_path, localPath);
+        await deviceSshService.uploadPDF(doc.remote_path, localPath, doc.title);
     } else {
         // Fallback to env vars if no device linked (legacy support or default)
         // But the prompt implies "register device... required before documents created".
@@ -100,7 +100,7 @@ export class SyncService {
         // For backward compatibility with existing code that uses env vars, we can keep the default SSHService() which uses env vars.
         // But let's prefer the device_id if present.
         if (doc.remote_path) {
-             await sshService.uploadPDF(doc.remote_path, localPath);
+             await sshService.uploadPDF(doc.remote_path, localPath, doc.title);
         } else {
              throw new Error('Remote path not configured');
         }
