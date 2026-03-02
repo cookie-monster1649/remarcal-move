@@ -64,6 +64,21 @@ export function initDb() {
       FOREIGN KEY (device_id) REFERENCES devices(id)
     );
   `);
+
+  // Migrations: Add columns if they don't exist
+  const caldavTableInfo = db.prepare("PRAGMA table_info(caldav_accounts)").all() as any[];
+  const hasSelectedCalendars = caldavTableInfo.some(col => col.name === 'selected_calendars');
+  if (!hasSelectedCalendars) {
+    console.log('Migrating caldav_accounts: adding selected_calendars column');
+    db.exec('ALTER TABLE caldav_accounts ADD COLUMN selected_calendars TEXT');
+  }
+
+  const docsTableInfo = db.prepare("PRAGMA table_info(documents)").all() as any[];
+  const hasYear = docsTableInfo.some(col => col.name === 'year');
+  if (!hasYear) {
+    console.log('Migrating documents: adding year column');
+    db.exec('ALTER TABLE documents ADD COLUMN year INTEGER DEFAULT 2025');
+  }
   
   console.log('Database initialized at', DB_PATH);
 }
