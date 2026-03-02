@@ -25,13 +25,26 @@ export class SSHService {
   }
 
   private getConfig() {
+    let privateKey: string | undefined = this.config.privateKey;
+    
+    // Try to load private key from env path if not provided in config
+    if (!privateKey && process.env.REMARKABLE_SSH_KEY_PATH) {
+        try {
+            if (fs.existsSync(process.env.REMARKABLE_SSH_KEY_PATH)) {
+                privateKey = fs.readFileSync(process.env.REMARKABLE_SSH_KEY_PATH, 'utf8');
+            }
+        } catch (e) {
+            console.warn('Failed to read SSH key from path:', process.env.REMARKABLE_SSH_KEY_PATH);
+        }
+    }
+
     return {
       host: this.config.host || process.env.REMARKABLE_HOST,
       port: parseInt(process.env.REMARKABLE_PORT || '22', 10),
       username: this.config.username || process.env.REMARKABLE_USER || 'root',
-      privateKey: this.config.privateKey || (process.env.REMARKABLE_SSH_KEY_PATH ? fs.readFileSync(process.env.REMARKABLE_SSH_KEY_PATH, 'utf8') : undefined),
+      privateKey: privateKey,
       passphrase: this.config.passphrase,
-      password: this.config.password,
+      password: this.config.password || process.env.REMARKABLE_PASSWORD,
     };
   }
 

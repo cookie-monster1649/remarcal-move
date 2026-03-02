@@ -7,6 +7,9 @@ services:
       - "127.0.0.1:3000:3000"
     volumes:
       - remarcal_data:/data
+      # Optional: Mount SSH key if using key-based auth. 
+      # If using password auth, you can comment this out or leave it (it will just be an empty mount if file missing on host, which might cause issues, so best to be explicit).
+      # For now, we'll keep it but users should ensure the file exists or remove this line.
       - ./ssh_key:/app/ssh_key:ro
     environment:
       - NODE_ENV=production
@@ -14,7 +17,8 @@ services:
       - APP_MASTER_KEY=${APP_MASTER_KEY}
       - REMARKABLE_HOST=${REMARKABLE_HOST}
       - REMARKABLE_USER=${REMARKABLE_USER}
-      - REMARKABLE_SSH_KEY_PATH=/app/ssh_key
+      - REMARKABLE_PASSWORD=${REMARKABLE_PASSWORD}
+      - REMARKABLE_SSH_KEY_PATH=${REMARKABLE_SSH_KEY_PATH:-/app/ssh_key}
       - SYNC_DRY_RUN=${SYNC_DRY_RUN:-false}
       - SYNC_BACKUP_REMOTE=${SYNC_BACKUP_REMOTE:-true}
     healthcheck:

@@ -59,8 +59,13 @@ export default function App() {
         axios.get('/api/library'),
         axios.get('/api/settings')
       ]);
-      setDocuments(docsRes.data);
-      setAccounts(accountsRes.data);
+      
+      // Defensive check: ensure data is an array
+      const docsData = Array.isArray(docsRes.data) ? docsRes.data : (docsRes.data.documents || []);
+      const accountsData = Array.isArray(accountsRes.data) ? accountsRes.data : [];
+      
+      setDocuments(docsData);
+      setAccounts(accountsData);
       setError(null);
     } catch (err: any) {
       setError(err.response?.data?.error || err.message);

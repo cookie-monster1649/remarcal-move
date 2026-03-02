@@ -25,25 +25,28 @@ A self-hosted, private tool to sync CalDAV calendars to reMarkable Paper Pro as 
 
 1. **Clone the repository** (or download files).
 
-2. **Prepare SSH Key**:
-   Place your private SSH key (that has access to your reMarkable) in a folder, e.g., `./ssh_key`.
-   Ensure the key file is named `id_rsa` or similar, and you reference it in `docker-compose.yml` or env vars.
-   
-   *Note: The default `docker-compose.yml` expects the key at `./ssh_key` (file) or mapped to `/app/ssh_key`.*
+2. **Configure SSH Access**:
+   - **Option A: SSH Key (Recommended)**:
+     Place your private SSH key in `./ssh_key`.
+     Ensure `REMARKABLE_SSH_KEY_PATH` is set to `/app/ssh_key` in `.env`.
+   - **Option B: Password**:
+     Set `REMARKABLE_PASSWORD` in your `.env` file.
+     You can remove the `./ssh_key` volume mount in `docker-compose.yml` if not using keys.
 
 3. **Configure Environment**:
-   Create a `.env` file based on `.env.example` (or modify `docker-compose.yml` directly).
+   Create a `.env` file based on `.env.example`.
 
    ```bash
    APP_MASTER_KEY=your_very_long_random_hex_string_at_least_32_bytes
-   REMARKABLE_HOST=10.11.99.1  # IP of your reMarkable (USB or WiFi)
+   REMARKABLE_HOST=10.11.99.1
    REMARKABLE_USER=root
+   # If using password:
+   REMARKABLE_PASSWORD=your_password
+   # If using key:
    REMARKABLE_SSH_KEY_PATH=/app/ssh_key
-   AUTH_USER=admin
-   AUTH_PASS=secret
    ```
 
-   **Important**: `APP_MASTER_KEY` is used to encrypt your CalDAV passwords. Keep it safe. If you lose it, you'll need to re-enter passwords. It must be at least 32 characters.
+   **Important**: `APP_MASTER_KEY` is used to encrypt your CalDAV passwords. Keep it safe.
 
 4. **Run with Docker Compose**:
 
