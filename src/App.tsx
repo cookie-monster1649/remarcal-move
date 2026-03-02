@@ -14,6 +14,7 @@ interface Document {
   sync_status: 'idle' | 'syncing' | 'error';
   last_error: string;
   year: number;
+  timezone: string;
   caldav_account_id: string;
   device_id: string;
 }
@@ -57,6 +58,7 @@ export default function App() {
     sync_enabled: false,
     sync_schedule: '0 0 * * *', // Daily at midnight
     year: new Date().getFullYear(),
+    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
     caldav_account_id: '',
     device_id: ''
   });
@@ -347,6 +349,7 @@ export default function App() {
                         sync_enabled: false,
                         sync_schedule: '0 0 * * *',
                         year: new Date().getFullYear(),
+                        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
                         caldav_account_id: accounts.length > 0 ? accounts[0].id : '',
                         device_id: devices.length > 0 ? devices[0].id : ''
                     });
@@ -406,6 +409,7 @@ export default function App() {
                                             sync_enabled: !!doc.sync_enabled,
                                             sync_schedule: doc.sync_schedule,
                                             year: doc.year || new Date().getFullYear(),
+                                            timezone: doc.timezone || 'UTC',
                                             caldav_account_id: doc.caldav_account_id,
                                             device_id: doc.device_id
                                         });
@@ -575,6 +579,17 @@ export default function App() {
                             className="w-full px-3 py-2 border rounded-lg"
                             value={docForm.year}
                             onChange={e => setDocForm({...docForm, year: parseInt(e.target.value)})}
+                        />
+                    </div>
+                    <div>
+                        <label className="block text-sm font-medium mb-1">Timezone</label>
+                        <input 
+                            type="text" 
+                            required
+                            placeholder="e.g. America/New_York"
+                            className="w-full px-3 py-2 border rounded-lg"
+                            value={docForm.timezone}
+                            onChange={e => setDocForm({...docForm, timezone: e.target.value})}
                         />
                     </div>
                     <div>

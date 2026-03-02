@@ -18,6 +18,7 @@ export interface CalendarEvent {
   location?: string;
   description?: string;
   allDay?: boolean;
+  timezone?: string;
 }
 
 export interface CalendarInfo {
@@ -149,7 +150,7 @@ export class CalDavService {
     }
   }
 
-  async fetchEvents(config: CalDavConfig): Promise<CalendarEvent[]> {
+  async fetchEvents(config: CalDavConfig): Promise<{ events: CalendarEvent[], timezone?: string }> {
     const { url, username, password, startDate, endDate } = config;
 
     // 1. Construct REPORT Request
@@ -199,7 +200,6 @@ export class CalDavService {
       const findCalendarData = (obj: any) => {
         if (!obj) return;
         if (obj['calendar-data']) {
-          // calendar-data might be an object with text content or just a string
           const data = typeof obj['calendar-data'] === 'object' ? obj['calendar-data']._ : obj['calendar-data'];
           if (data) rawEvents.push(data);
           return;
@@ -228,19 +228,23 @@ export class CalDavService {
 
       // 4. Parse iCal Data into CalendarEvent objects
       const events: CalendarEvent[] = [];
+      let calendarTimezone: string | undefined;
 
       for (const raw of rawEvents) {
         try {
           const jcalData = ICAL.parse(raw);
           const comp = new ICAL.Component(jcalData);
+          
+          // Try to get X-WR-TIMEZONE from the VCALENDAR component
+          const wrTz = comp.getFirstPropertyValue('x-wr-timezone') as string;
+          if (wrTz && !calendarTimezone) {
+            calendarTimezone = wrTz;
+          }
+
           const vevents = comp.getAllSubcomponents('vevent');
 
           for (const vevent of vevents) {
             const event = new ICAL.Event(vevent);
-
-            // Handle Recurrence Expansion if needed (simplified for now: just the base event or expanded instances if server returns them)
-            // Note: CalDAV servers usually expand recurrences in REPORT responses if requested, but here we rely on the server sending expanded instances or just the base.
-            // For a robust implementation, we might need client-side expansion, but let's start simple.
 
             const summary = event.summary;
             const location = event.location;
@@ -248,7 +252,13 @@ export class CalDavService {
             
             let startDate = event.startDate.toJSDate();
             let endDate = event.endDate.toJSDate();
-            const isAllDay = event.startDate.isDate; // True if just date (no time)
+            const isAllDay = event.startDate.isDate;
+            
+            // Get the timezone of the event itself
+            const eventTz = event.startDate.zone.tzid;
+            if (eventTz && !calendarTimezone) {
+              calendarTimezone = eventTz;
+            }
 
             events.push({
               summary,
@@ -256,7 +266,8 @@ export class CalDavService {
               end: endDate,
               location,
               description,
-              allDay: isAllDay
+              allDay: isAllDay,
+              timezone: eventTz
             });
           }
         } catch (e) {
@@ -264,7 +275,7 @@ export class CalDavService {
         }
       }
 
-      return events;
+      return { events, timezone: calendarTimezone };
 
     } catch (error: any) {
       console.error('CalDAV Service Error:', error.message);

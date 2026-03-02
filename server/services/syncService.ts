@@ -5,6 +5,7 @@ import { SSHService } from './sshService.js';
 import { decrypt } from './encryptionService.js';
 import * as fs from 'fs';
 import * as path from 'path';
+import { toDate, formatInTimeZone } from 'date-fns-tz';
 
 const calDavService = new CalDavService();
 const pdfService = new PDFService();
@@ -27,6 +28,7 @@ export class SyncService {
       // 2. Fetch Events
       const password = decrypt(account.encrypted_password);
       const year = doc.year || new Date().getFullYear();
+      const targetTimezone = doc.timezone || 'UTC';
       
       const startDate = `${year}-01-01`;
       const endDate = `${year}-12-31`;
@@ -38,7 +40,6 @@ export class SyncService {
         console.warn('Failed to parse selected_calendars for account', account.id);
       }
 
-      // If no calendars selected, use the account URL as fallback (legacy behavior)
       const calendarUrls = selectedCalendars.length > 0 
         ? selectedCalendars.map((c: any) => c.url) 
         : [account.url];
@@ -46,21 +47,33 @@ export class SyncService {
       const allEvents = [];
       for (const url of calendarUrls) {
         try {
-          const events = await calDavService.fetchEvents({
+          const { events, timezone: calTz } = await calDavService.fetchEvents({
             url,
             username: account.username,
             password: password,
             startDate,
             endDate
           });
-          allEvents.push(...events);
+          
+          // Process events to ensure they are in the target timezone
+          const processedEvents = events.map(e => {
+            // If the event has a specific timezone, we should respect it.
+            // However, for the PDF generation, we want to know what time it is in the USER'S target timezone.
+            // JS Date objects from ical.js are already absolute points in time.
+            return {
+              ...e,
+              // We pass the Date object. PDFService will need to format it using the target timezone.
+            };
+          });
+          
+          allEvents.push(...processedEvents);
         } catch (err: any) {
           console.warn(`Failed to fetch events for calendar ${url}:`, err.message);
         }
       }
 
       // 3. Generate PDF
-      const pdfBuffer = pdfService.generate(allEvents, { year });
+      const pdfBuffer = pdfService.generate(allEvents, { year, timezone: targetTimezone });
       
       // Save locally to /data/docs for persistence/cache
       const localPath = path.join(process.env.DATA_DIR || './data', 'docs', `${docId}.pdf`);

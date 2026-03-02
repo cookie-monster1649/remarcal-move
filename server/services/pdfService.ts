@@ -1,6 +1,6 @@
 import { jsPDF } from 'jspdf';
 import { format, addDays, startOfWeek, endOfWeek, startOfMonth, endOfMonth, eachDayOfInterval, isSameMonth, isSameDay, parseISO } from 'date-fns';
-import { toZonedTime } from 'date-fns-tz';
+import { formatInTimeZone } from 'date-fns-tz';
 
 export interface CalendarEvent {
   summary: string;
@@ -13,11 +13,22 @@ export interface CalendarEvent {
 
 export interface PDFConfig {
   year: number;
-  timezone?: string;
+  timezone: string;
 }
 
 export class PDFService {
   generate(events: CalendarEvent[], config: PDFConfig): Buffer {
+    const tz = config.timezone || 'UTC';
+    
+    // Helper to get date string in target timezone
+    const getTzDateStr = (date: Date) => formatInTimeZone(date, tz, 'yyyy-MM-dd');
+    const getTzTimeStr = (date: Date) => formatInTimeZone(date, tz, 'HH:mm');
+    const getTzHour = (date: Date) => {
+        const h = parseInt(formatInTimeZone(date, tz, 'H'));
+        const m = parseInt(formatInTimeZone(date, tz, 'm'));
+        return h + m / 60;
+    };
+
     // 1. Setup Dimensions & Constants
     const DPI = 226;
     const pxToMm = (px: number) => (px / DPI) * 25.4;
@@ -222,10 +233,7 @@ export class PDFService {
             const dX = x + 2 + (c * cellW);
             const dY = y + 13 + (r * cellH);
             
-            const hasEvent = events.some(e => {
-                const tzStart = config.timezone ? toZonedTime(e.start, config.timezone) : e.start;
-                return isSameDay(tzStart, d);
-            });
+            const hasEvent = events.some(e => getTzDateStr(e.start) === format(d, 'yyyy-MM-dd'));
             if (hasEvent) {
                 doc.setFont("helvetica", "bold");
                 doc.setFillColor(220, 220, 220);
@@ -328,10 +336,7 @@ export class PDFService {
                     doc.link(x, y, cellW, cellH, { pageNumber: pageMap.days[dKey] });
                 }
                 
-                const dayEvents = events.filter(e => {
-                    const tzStart = config.timezone ? toZonedTime(e.start, config.timezone) : e.start;
-                    return isSameDay(tzStart, d);
-                });
+                const dayEvents = events.filter(e => getTzDateStr(e.start) === format(d, 'yyyy-MM-dd'));
                 let eventY = y + 8;
                 doc.setFontSize(5);
                 doc.setTextColor(0);
@@ -398,18 +403,14 @@ export class PDFService {
                      doc.link(x, y, cellW, 8, { pageNumber: pageMap.days[dKey] });
                  }
                  
-                 const dayEvents = events.filter(e => {
-                     const tzStart = config.timezone ? toZonedTime(e.start, config.timezone) : e.start;
-                     return isSameDay(tzStart, d);
-                 });
+                 const dayEvents = events.filter(e => getTzDateStr(e.start) === format(d, 'yyyy-MM-dd'));
                  let eventY = y + 12;
                  doc.setFontSize(6);
                  doc.setFont("helvetica", "normal");
                  doc.setTextColor(0);
                  dayEvents.forEach(e => {
                      if (eventY < y + cellH - 5) {
-                         const tzStart = config.timezone ? toZonedTime(e.start, config.timezone) : e.start;
-                         const time = format(tzStart, 'HH:mm');
+                         const time = getTzTimeStr(e.start);
                          const summary = truncate(e.summary, 20);
                          doc.roundedRect(x + 2, eventY, cellW - 4, 5, 1, 1, 'S');
                          doc.text(`${time} ${summary}`, x + 3, eventY + 3.5);
@@ -456,11 +457,9 @@ export class PDFService {
         doc.text("All day", 7, contentY + 6); 
         
         const allDayEvents = events.filter(e => {
-            const tzStart = config.timezone ? toZonedTime(e.start, config.timezone) : e.start;
-            const tzEnd = config.timezone ? toZonedTime(e.end, config.timezone) : e.end;
-            const duration = tzEnd.getTime() - tzStart.getTime();
-            const isMidnight = tzStart.getHours() === 0 && tzStart.getMinutes() === 0;
-            return isSameDay(tzStart, day) && (duration >= 86400000 || isMidnight);
+            const duration = e.end.getTime() - e.start.getTime();
+            const isMidnight = parseInt(formatInTimeZone(e.start, tz, 'H')) === 0 && parseInt(formatInTimeZone(e.start, tz, 'm')) === 0;
+            return getTzDateStr(e.start) === format(day, 'yyyy-MM-dd') && (duration >= 86400000 || isMidnight);
         });
         
         let adX = 35; 
@@ -500,26 +499,22 @@ export class PDFService {
             if (h < endHour) {
                 doc.setFontSize(7);
                 doc.setTextColor(100);
+                // We just need a label for the hour, so any date will do
                 const timeLabel = format(new Date().setHours(h, 0), 'h a');
                 doc.text(timeLabel, 5, y + 3);
             }
         }
         
         const dayEvents = events.filter(e => {
-            const tzStart = config.timezone ? toZonedTime(e.start, config.timezone) : e.start;
-            const tzEnd = config.timezone ? toZonedTime(e.end, config.timezone) : e.end;
-            const duration = tzEnd.getTime() - tzStart.getTime();
-            const isMidnight = tzStart.getHours() === 0 && tzStart.getMinutes() === 0;
+            const duration = e.end.getTime() - e.start.getTime();
+            const isMidnight = parseInt(formatInTimeZone(e.start, tz, 'H')) === 0 && parseInt(formatInTimeZone(e.start, tz, 'm')) === 0;
             if (duration >= 86400000 || isMidnight) return false;
-            return isSameDay(tzStart, day);
+            return getTzDateStr(e.start) === format(day, 'yyyy-MM-dd');
         });
         
         const items = dayEvents.map(e => {
-            const tzStart = config.timezone ? toZonedTime(e.start, config.timezone) : e.start;
-            const tzEnd = config.timezone ? toZonedTime(e.end, config.timezone) : e.end;
-            
-            let startH = tzStart.getHours() + tzStart.getMinutes() / 60;
-            let endH = tzEnd.getHours() + tzEnd.getMinutes() / 60;
+            let startH = getTzHour(e.start);
+            let endH = getTzHour(e.end);
             if (endH < startH) endH += 24;
             
             if (startH < startHour) startH = startHour;

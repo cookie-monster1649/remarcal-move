@@ -56,6 +56,7 @@ export function initDb() {
       sync_status TEXT DEFAULT 'idle', -- idle, checking, syncing, error
       last_error TEXT,
       year INTEGER DEFAULT 2025,
+      timezone TEXT DEFAULT 'UTC',
       caldav_account_id TEXT,
       device_id TEXT, -- Link to device
       created_at TEXT DEFAULT CURRENT_TIMESTAMP,
@@ -78,6 +79,12 @@ export function initDb() {
   if (!hasYear) {
     console.log('Migrating documents: adding year column');
     db.exec('ALTER TABLE documents ADD COLUMN year INTEGER DEFAULT 2025');
+  }
+
+  const hasTimezone = docsTableInfo.some(col => col.name === 'timezone');
+  if (!hasTimezone) {
+    console.log('Migrating documents: adding timezone column');
+    db.exec("ALTER TABLE documents ADD COLUMN timezone TEXT DEFAULT 'UTC'");
   }
   
   console.log('Database initialized at', DB_PATH);
