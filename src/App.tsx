@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Calendar, Settings, Upload, Plus, Trash2, RefreshCw, FileText, CheckCircle, XCircle, Clock } from 'lucide-react';
+import { Calendar, Settings, Upload, Plus, Trash2, RefreshCw, FileText, CheckCircle, XCircle, Clock, Tablet, Wifi, WifiOff } from 'lucide-react';
 import axios from 'axios';
 
 // Types
@@ -14,6 +14,7 @@ interface Document {
   sync_status: 'idle' | 'syncing' | 'error';
   last_error: string;
   caldav_account_id: string;
+  device_id: string;
 }
 
 interface Account {
@@ -24,12 +25,23 @@ interface Account {
   calendar_id: string;
 }
 
+interface Device {
+  id: string;
+  name: string;
+  host: string;
+  username: string;
+  port: number;
+  last_connected_at: string;
+}
+
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'library' | 'settings'>('library');
+  const [activeTab, setActiveTab] = useState<'library' | 'settings' | 'devices'>('library');
   const [documents, setDocuments] = useState<Document[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
+  const [devices, setDevices] = useState<Device[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [deviceStatus, setDeviceStatus] = useState<Record<string, 'connected' | 'disconnected' | 'checking'>>({});
 
   // Forms state
   const [showDocForm, setShowDocForm] = useState(false);
@@ -39,7 +51,8 @@ export default function App() {
     remote_path: '/home/root/.local/share/remarkable/xochitl/calendar.pdf',
     sync_enabled: false,
     sync_schedule: '0 0 * * *', // Daily at midnight
-    caldav_account_id: ''
+    caldav_account_id: '',
+    device_id: ''
   });
 
   const [showAccountForm, setShowAccountForm] = useState(false);
@@ -52,20 +65,34 @@ export default function App() {
     calendar_id: ''
   });
 
+  const [showDeviceForm, setShowDeviceForm] = useState(false);
+  const [editingDevice, setEditingDevice] = useState<Device | null>(null);
+  const [deviceForm, setDeviceForm] = useState({
+    name: '',
+    host: '',
+    username: 'root',
+    password: '',
+    port: 22,
+    private_key_path: ''
+  });
+
   const fetchData = async () => {
     setLoading(true);
     try {
-      const [docsRes, accountsRes] = await Promise.all([
+      const [docsRes, accountsRes, devicesRes] = await Promise.all([
         axios.get('/api/library'),
-        axios.get('/api/settings')
+        axios.get('/api/settings'),
+        axios.get('/api/devices')
       ]);
       
       // Defensive check: ensure data is an array
       const docsData = Array.isArray(docsRes.data) ? docsRes.data : (docsRes.data.documents || []);
       const accountsData = Array.isArray(accountsRes.data) ? accountsRes.data : [];
+      const devicesData = Array.isArray(devicesRes.data) ? devicesRes.data : [];
       
       setDocuments(docsData);
       setAccounts(accountsData);
+      setDevices(devicesData);
       setError(null);
     } catch (err: any) {
       setError(err.response?.data?.error || err.message);
@@ -78,11 +105,39 @@ export default function App() {
     }
   };
 
+  // Check connection for all devices
+  const checkConnections = async () => {
+    if (devices.length === 0) return;
+    
+    const newStatus = { ...deviceStatus };
+    
+    await Promise.all(devices.map(async (dev) => {
+        newStatus[dev.id] = 'checking';
+        setDeviceStatus({ ...newStatus });
+        try {
+            await axios.post(`/api/devices/${dev.id}/check`);
+            newStatus[dev.id] = 'connected';
+        } catch (e) {
+            newStatus[dev.id] = 'disconnected';
+        }
+    }));
+    
+    setDeviceStatus(newStatus);
+  };
+
   useEffect(() => {
     fetchData();
     const interval = setInterval(fetchData, 10000); // Poll every 10s
     return () => clearInterval(interval);
   }, []);
+
+  useEffect(() => {
+    if (devices.length > 0) {
+        checkConnections();
+        const interval = setInterval(checkConnections, 30000); // Check every 30s
+        return () => clearInterval(interval);
+    }
+  }, [devices.length]); // Re-run when devices list changes
 
   const handleDocSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -117,6 +172,23 @@ export default function App() {
     }
   };
 
+  const handleDeviceSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      if (editingDevice) {
+        await axios.put(`/api/devices/${editingDevice.id}`, deviceForm);
+      } else {
+        await axios.post('/api/devices', deviceForm);
+      }
+      setShowDeviceForm(false);
+      setEditingDevice(null);
+      setDeviceForm({ name: '', host: '', username: 'root', password: '', port: 22, private_key_path: '' });
+      fetchData();
+    } catch (err: any) {
+      alert(err.response?.data?.error || err.message);
+    }
+  };
+
   const deleteDoc = async (id: string) => {
     if (!confirm('Are you sure?')) return;
     try {
@@ -131,6 +203,16 @@ export default function App() {
     if (!confirm('Are you sure?')) return;
     try {
       await axios.delete(`/api/settings/${id}`);
+      fetchData();
+    } catch (err: any) {
+      alert(err.message);
+    }
+  };
+
+  const deleteDevice = async (id: string) => {
+    if (!confirm('Are you sure?')) return;
+    try {
+      await axios.delete(`/api/devices/${id}`);
       fetchData();
     } catch (err: any) {
       alert(err.message);
@@ -155,6 +237,28 @@ export default function App() {
               <Calendar size={20} />
             </div>
             <h1 className="text-xl font-bold tracking-tight">Remarcal</h1>
+            
+            {/* Device Status Indicator (Summary) */}
+            {devices.length > 0 && (
+                <div className="ml-4 flex items-center gap-2 px-3 py-1 bg-stone-50 rounded-full border border-stone-200 text-xs">
+                    {Object.values(deviceStatus).some(s => s === 'connected') ? (
+                        <>
+                            <Wifi size={14} className="text-green-500" />
+                            <span className="text-stone-600">Connected</span>
+                        </>
+                    ) : Object.values(deviceStatus).some(s => s === 'checking') ? (
+                        <>
+                            <RefreshCw size={14} className="animate-spin text-stone-400" />
+                            <span className="text-stone-500">Checking...</span>
+                        </>
+                    ) : (
+                        <>
+                            <WifiOff size={14} className="text-red-500" />
+                            <span className="text-stone-600">Disconnected</span>
+                        </>
+                    )}
+                </div>
+            )}
           </div>
           <nav className="flex gap-4">
             <button 
@@ -162,6 +266,12 @@ export default function App() {
               className={`px-3 py-2 rounded-lg text-sm font-medium ${activeTab === 'library' ? 'bg-stone-100 text-stone-900' : 'text-stone-500 hover:text-stone-900'}`}
             >
               Library
+            </button>
+            <button 
+              onClick={() => setActiveTab('devices')}
+              className={`px-3 py-2 rounded-lg text-sm font-medium ${activeTab === 'devices' ? 'bg-stone-100 text-stone-900' : 'text-stone-500 hover:text-stone-900'}`}
+            >
+              Devices
             </button>
             <button 
               onClick={() => setActiveTab('settings')}
@@ -193,7 +303,8 @@ export default function App() {
                         remote_path: '/home/root/.local/share/remarkable/xochitl/calendar.pdf',
                         sync_enabled: false,
                         sync_schedule: '0 0 * * *',
-                        caldav_account_id: accounts.length > 0 ? accounts[0].id : ''
+                        caldav_account_id: accounts.length > 0 ? accounts[0].id : '',
+                        device_id: devices.length > 0 ? devices[0].id : ''
                     });
                     setShowDocForm(true);
                 }}
@@ -250,7 +361,8 @@ export default function App() {
                                             remote_path: doc.remote_path,
                                             sync_enabled: !!doc.sync_enabled,
                                             sync_schedule: doc.sync_schedule,
-                                            caldav_account_id: doc.caldav_account_id
+                                            caldav_account_id: doc.caldav_account_id,
+                                            device_id: doc.device_id
                                         });
                                         setShowDocForm(true);
                                     }}
@@ -271,6 +383,61 @@ export default function App() {
                     ))}
                 </div>
             )}
+          </div>
+        )}
+
+        {activeTab === 'devices' && (
+          <div className="space-y-6">
+            <div className="flex justify-between items-center">
+              <h2 className="text-2xl font-bold">Devices</h2>
+              <button 
+                onClick={() => {
+                    setEditingDevice(null);
+                    setDeviceForm({ name: '', host: '', username: 'root', password: '', port: 22, private_key_path: '' });
+                    setShowDeviceForm(true);
+                }}
+                className="flex items-center px-4 py-2 bg-stone-900 text-white rounded-lg hover:bg-stone-800"
+              >
+                <Plus size={18} className="mr-2" />
+                Add Device
+              </button>
+            </div>
+
+            <div className="grid gap-4">
+                {devices.map(dev => (
+                    <div key={dev.id} className="bg-white p-6 rounded-2xl border border-stone-200 shadow-sm flex justify-between items-center">
+                        <div>
+                            <div className="flex items-center gap-2">
+                                <Tablet size={18} />
+                                <h3 className="font-bold">{dev.name}</h3>
+                                {deviceStatus[dev.id] === 'connected' && <Wifi size={14} className="text-green-500" title="Connected" />}
+                                {deviceStatus[dev.id] === 'disconnected' && <WifiOff size={14} className="text-red-500" title="Disconnected" />}
+                                {deviceStatus[dev.id] === 'checking' && <RefreshCw size={14} className="animate-spin text-stone-400" title="Checking..." />}
+                            </div>
+                            <p className="text-sm text-stone-500 font-mono mt-1">{dev.username}@{dev.host}:{dev.port}</p>
+                            <p className="text-xs text-stone-400 mt-1">Last connected: {new Date(dev.last_connected_at).toLocaleString()}</p>
+                        </div>
+                        <div className="flex gap-2">
+                            <button 
+                                onClick={() => {
+                                    setEditingDevice(dev);
+                                    setDeviceForm({ ...dev, password: '', private_key_path: '' }); // Don't show password
+                                    setShowDeviceForm(true);
+                                }}
+                                className="p-2 text-stone-500 hover:text-stone-900 hover:bg-stone-100 rounded-lg"
+                            >
+                                <Settings size={20} />
+                            </button>
+                            <button 
+                                onClick={() => deleteDevice(dev.id)}
+                                className="p-2 text-stone-500 hover:text-red-600 hover:bg-red-50 rounded-lg"
+                            >
+                                <Trash2 size={20} />
+                            </button>
+                        </div>
+                    </div>
+                ))}
+            </div>
           </div>
         )}
 
@@ -327,7 +494,7 @@ export default function App() {
       {/* Document Modal */}
       {showDocForm && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-            <div className="bg-white rounded-2xl p-8 max-w-md w-full shadow-xl">
+            <div className="bg-white rounded-2xl p-8 max-w-md w-full shadow-xl max-h-[90vh] overflow-y-auto">
                 <h3 className="text-xl font-bold mb-4">{editingDoc ? 'Edit Document' : 'New Document'}</h3>
                 <form onSubmit={handleDocSubmit} className="space-y-4">
                     <div>
@@ -339,6 +506,20 @@ export default function App() {
                             value={docForm.title}
                             onChange={e => setDocForm({...docForm, title: e.target.value})}
                         />
+                    </div>
+                    <div>
+                        <label className="block text-sm font-medium mb-1">Device</label>
+                        <select 
+                            required
+                            className="w-full px-3 py-2 border rounded-lg"
+                            value={docForm.device_id}
+                            onChange={e => setDocForm({...docForm, device_id: e.target.value})}
+                        >
+                            <option value="">Select Device</option>
+                            {devices.map(d => (
+                                <option key={d.id} value={d.id}>{d.name}</option>
+                            ))}
+                        </select>
                     </div>
                     <div>
                         <label className="block text-sm font-medium mb-1">Remote Path (on reMarkable)</label>
@@ -400,6 +581,96 @@ export default function App() {
                             className="px-4 py-2 bg-stone-900 text-white rounded-lg hover:bg-stone-800"
                         >
                             Save
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+      )}
+
+      {/* Device Modal */}
+      {showDeviceForm && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-2xl p-8 max-w-md w-full shadow-xl">
+                <h3 className="text-xl font-bold mb-4">{editingDevice ? 'Edit Device' : 'New Device'}</h3>
+                <form onSubmit={handleDeviceSubmit} className="space-y-4">
+                    <div>
+                        <label className="block text-sm font-medium mb-1">Name</label>
+                        <input 
+                            type="text" 
+                            required
+                            className="w-full px-3 py-2 border rounded-lg"
+                            value={deviceForm.name}
+                            onChange={e => setDeviceForm({...deviceForm, name: e.target.value})}
+                            placeholder="My reMarkable"
+                        />
+                    </div>
+                    <div className="grid grid-cols-3 gap-4">
+                        <div className="col-span-2">
+                            <label className="block text-sm font-medium mb-1">Host (IP)</label>
+                            <input 
+                                type="text" 
+                                required
+                                className="w-full px-3 py-2 border rounded-lg"
+                                value={deviceForm.host}
+                                onChange={e => setDeviceForm({...deviceForm, host: e.target.value})}
+                                placeholder="10.11.99.1"
+                            />
+                        </div>
+                        <div>
+                            <label className="block text-sm font-medium mb-1">Port</label>
+                            <input 
+                                type="number" 
+                                required
+                                className="w-full px-3 py-2 border rounded-lg"
+                                value={deviceForm.port}
+                                onChange={e => setDeviceForm({...deviceForm, port: parseInt(e.target.value)})}
+                            />
+                        </div>
+                    </div>
+                    <div>
+                        <label className="block text-sm font-medium mb-1">Username</label>
+                        <input 
+                            type="text" 
+                            required
+                            className="w-full px-3 py-2 border rounded-lg"
+                            value={deviceForm.username}
+                            onChange={e => setDeviceForm({...deviceForm, username: e.target.value})}
+                        />
+                    </div>
+                    <div>
+                        <label className="block text-sm font-medium mb-1">Password</label>
+                        <input 
+                            type="password" 
+                            className="w-full px-3 py-2 border rounded-lg"
+                            value={deviceForm.password}
+                            onChange={e => setDeviceForm({...deviceForm, password: e.target.value})}
+                            placeholder={editingDevice ? "(Unchanged)" : "Optional if using key"}
+                        />
+                    </div>
+                    <div>
+                        <label className="block text-sm font-medium mb-1">Private Key Path (Server-side)</label>
+                        <input 
+                            type="text" 
+                            className="w-full px-3 py-2 border rounded-lg font-mono text-xs"
+                            value={deviceForm.private_key_path}
+                            onChange={e => setDeviceForm({...deviceForm, private_key_path: e.target.value})}
+                            placeholder="/app/ssh_key"
+                        />
+                    </div>
+                    <div className="flex justify-end gap-2 mt-6">
+                        <button 
+                            type="button"
+                            onClick={() => setShowDeviceForm(false)}
+                            className="px-4 py-2 text-stone-600 hover:bg-stone-100 rounded-lg"
+                        >
+                            Cancel
+                        </button>
+                        <button 
+                            type="submit"
+                            className="px-4 py-2 bg-stone-900 text-white rounded-lg hover:bg-stone-800"
+                        >
+                            {editingDevice ? 'Save & Test' : 'Create & Test'}
                         </button>
                     </div>
                 </form>

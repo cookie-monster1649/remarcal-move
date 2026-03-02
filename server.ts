@@ -6,6 +6,7 @@ import { initEncryption } from './server/services/encryptionService.js';
 import { schedulerService } from './server/services/schedulerService.js';
 import libraryRoutes from './server/routes/library.js';
 import settingsRoutes from './server/routes/settings.js';
+import devicesRoutes from './server/routes/devices.js';
 import { basicAuth } from './server/middleware/auth.js';
 
 async function startServer() {
@@ -34,6 +35,7 @@ async function startServer() {
 
   app.use('/api/library', libraryRoutes);
   app.use('/api/settings', settingsRoutes);
+  app.use('/api/devices', devicesRoutes);
 
   // Vite middleware
   if (process.env.NODE_ENV !== 'production') {

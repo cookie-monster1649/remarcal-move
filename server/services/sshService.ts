@@ -9,13 +9,10 @@ export interface SSHConfig {
   privateKey?: string;
   passphrase?: string;
   password?: string;
+  port?: number; // Add port
 }
 
-export interface DeviceFile {
-  uuid: string;
-  name: string;
-  lastModified: Date;
-}
+// ...
 
 export class SSHService {
   private config: SSHConfig;
@@ -27,8 +24,9 @@ export class SSHService {
   private getConfig() {
     let privateKey: string | undefined = this.config.privateKey;
     
-    // Try to load private key from env path if not provided in config
-    if (!privateKey && process.env.REMARKABLE_SSH_KEY_PATH) {
+    // Try to load private key from env path if not provided in config AND no password provided
+    // If config has password, we might not need key.
+    if (!privateKey && !this.config.password && process.env.REMARKABLE_SSH_KEY_PATH) {
         try {
             if (fs.existsSync(process.env.REMARKABLE_SSH_KEY_PATH)) {
                 privateKey = fs.readFileSync(process.env.REMARKABLE_SSH_KEY_PATH, 'utf8');
@@ -38,9 +36,10 @@ export class SSHService {
         }
     }
 
+    // Prioritize config (DB) over env vars
     return {
       host: this.config.host || process.env.REMARKABLE_HOST,
-      port: parseInt(process.env.REMARKABLE_PORT || '22', 10),
+      port: this.config.port || parseInt(process.env.REMARKABLE_PORT || '22', 10),
       username: this.config.username || process.env.REMARKABLE_USER || 'root',
       privateKey: privateKey,
       passphrase: this.config.passphrase,
@@ -48,7 +47,14 @@ export class SSHService {
     };
   }
 
+  // Add testConnection method
+  async testConnection(): Promise<void> {
+    const conn = await this.connect();
+    conn.end();
+  }
+
   private async connect(): Promise<Client> {
+// ...
     const config = this.getConfig();
     if (!config.host) throw new Error('SSH Host not configured');
 

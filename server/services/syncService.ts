@@ -57,12 +57,44 @@ export class SyncService {
       const localPath = path.join(process.env.DATA_DIR || './data', 'docs', `${docId}.pdf`);
       fs.writeFileSync(localPath, pdfBuffer);
 
-      // 4. Upload to Device
-      if (doc.remote_path) {
-          await sshService.uploadPDF(doc.remote_path, localPath);
-      } else {
-          throw new Error('Remote path not configured');
-      }
+    // 4. Upload to Device
+    if (doc.device_id) {
+        const device = db.prepare('SELECT * FROM devices WHERE id = ?').get(doc.device_id) as any;
+        if (!device) throw new Error('Device not found');
+        
+        let privateKeyContent: string | undefined;
+        if (device.private_key_path) {
+            try {
+                if (fs.existsSync(device.private_key_path)) {
+                    privateKeyContent = fs.readFileSync(device.private_key_path, 'utf8');
+                }
+            } catch (e) {
+                console.warn(`Failed to read private key for device ${doc.device_id}:`, e);
+            }
+        }
+
+        const sshConfig = {
+            host: device.host,
+            username: device.username,
+            port: device.port,
+            password: device.encrypted_password ? decrypt(device.encrypted_password) : undefined,
+            privateKey: privateKeyContent
+        };
+        
+        const deviceSshService = new SSHService(sshConfig);
+        await deviceSshService.uploadPDF(doc.remote_path, localPath);
+    } else {
+        // Fallback to env vars if no device linked (legacy support or default)
+        // But the prompt implies "register device... required before documents created".
+        // So maybe we enforce device selection.
+        // For backward compatibility with existing code that uses env vars, we can keep the default SSHService() which uses env vars.
+        // But let's prefer the device_id if present.
+        if (doc.remote_path) {
+             await sshService.uploadPDF(doc.remote_path, localPath);
+        } else {
+             throw new Error('Remote path not configured');
+        }
+    }
 
       // 5. Update Status
       db.prepare('UPDATE documents SET sync_status = ?, last_synced_at = ? WHERE id = ?').run('idle', new Date().toISOString(), docId);

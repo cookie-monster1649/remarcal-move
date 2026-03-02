@@ -34,6 +34,18 @@ export function initDb() {
       created_at TEXT DEFAULT CURRENT_TIMESTAMP
     );
 
+    CREATE TABLE IF NOT EXISTS devices (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      host TEXT NOT NULL,
+      username TEXT NOT NULL,
+      encrypted_password TEXT, -- Optional if using key
+      private_key_path TEXT,   -- Optional if using password
+      port INTEGER DEFAULT 22,
+      last_connected_at TEXT,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+
     CREATE TABLE IF NOT EXISTS documents (
       id TEXT PRIMARY KEY,
       title TEXT NOT NULL,
@@ -45,9 +57,11 @@ export function initDb() {
       sync_status TEXT DEFAULT 'idle', -- idle, checking, syncing, error
       last_error TEXT,
       caldav_account_id TEXT,
+      device_id TEXT, -- Link to device
       created_at TEXT DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (caldav_account_id) REFERENCES caldav_accounts(id)
+      FOREIGN KEY (caldav_account_id) REFERENCES caldav_accounts(id),
+      FOREIGN KEY (device_id) REFERENCES devices(id)
     );
   `);
   
