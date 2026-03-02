@@ -27,11 +27,26 @@ export interface CalendarInfo {
 }
 
 export class CalDavService {
-  async discoverCalendars(config: Partial<CalDavConfig>): Promise<CalendarInfo[]> {
-    const { url, username, password } = config;
+  async discoverCalendars(config: Partial<CalDavConfig> & { accountId?: string }): Promise<CalendarInfo[]> {
+    let { url, username, password, accountId } = config;
     if (!url) throw new Error('URL is required for discovery');
 
-    const xmlBody = `
+    // Ensure trailing slash for collection discovery
+    if (!url.endsWith('/')) {
+      url += '/';
+    }
+
+    // If password is empty and accountId is provided, try to get from DB
+    if (!password && accountId) {
+      const db = (await import('../db.js')).default;
+      const { decrypt } = await import('./encryptionService.js');
+      const account = db.prepare('SELECT encrypted_password FROM caldav_accounts WHERE id = ?').get(accountId) as any;
+      if (account) {
+        password = decrypt(account.encrypted_password);
+      }
+    }
+
+    const xmlBody = `<?xml version="1.0" encoding="utf-8" ?>
       <d:propfind xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav">
         <d:prop>
           <d:displayname />
@@ -43,16 +58,34 @@ export class CalDavService {
     `;
 
     try {
+      const authHeader = username && password 
+        ? `Basic ${Buffer.from(`${username}:${password}`).toString('base64')}`
+        : undefined;
+
       const response = await axios({
         method: 'PROPFIND',
         url: url,
-        auth: username && password ? { username, password } : undefined,
         headers: {
           'Content-Type': 'application/xml; charset=utf-8',
-          'Depth': '1'
+          'Depth': '1',
+          'Authorization': authHeader,
+          'User-Agent': 'Remarcal/1.0'
         },
-        data: xmlBody
+        data: xmlBody,
+        validateStatus: (status) => status < 500, // Handle 401/404 gracefully
       });
+
+      if (response.status === 401) {
+        throw new Error('Authentication failed (401). Please check your username and password.');
+      }
+
+      if (response.status === 404) {
+        throw new Error('URL not found (404). Please check the CalDAV URL.');
+      }
+
+      if (response.status >= 400) {
+        throw new Error(`Server returned error ${response.status}: ${response.statusText}`);
+      }
 
       const result = await parseStringPromise(response.data, {
         tagNameProcessors: [(name) => {
@@ -64,12 +97,26 @@ export class CalDavService {
       });
 
       const calendars: CalendarInfo[] = [];
+      if (!result.multistatus || !result.multistatus.response) {
+        return [];
+      }
+
       const responses = Array.isArray(result.multistatus.response) 
         ? result.multistatus.response 
         : [result.multistatus.response];
 
       for (const r of responses) {
-        const prop = r.propstat?.prop || r.prop;
+        // Handle propstat being an array or object
+        let prop: any;
+        if (r.propstat) {
+          const propstats = Array.isArray(r.propstat) ? r.propstat : [r.propstat];
+          // Find the one with status 200
+          const okPropstat = propstats.find((ps: any) => ps.status && ps.status.includes('200'));
+          prop = okPropstat?.prop || propstats[0]?.prop;
+        } else {
+          prop = r.prop;
+        }
+
         if (!prop) continue;
 
         const resourcetype = prop.resourcetype;
@@ -94,8 +141,11 @@ export class CalDavService {
 
       return calendars;
     } catch (error: any) {
+      if (error.response?.status === 401) {
+        throw new Error('Authentication failed (401). Please check your username and password.');
+      }
       console.error('CalDAV Discovery Error:', error.message);
-      throw new Error(`CalDAV discovery failed: ${error.message}`);
+      throw error;
     }
   }
 

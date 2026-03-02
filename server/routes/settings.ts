@@ -15,9 +15,9 @@ router.get('/', (req, res) => {
 
 // Discover Calendars
 router.post('/discover', async (req, res) => {
-  const { url, username, password } = req.body;
+  const { url, username, password, accountId } = req.body;
   try {
-    const calendars = await caldavService.discoverCalendars({ url, username, password });
+    const calendars = await caldavService.discoverCalendars({ url, username, password, accountId });
     res.json(calendars);
   } catch (err: any) {
     res.status(500).json({ error: err.message });

@@ -195,7 +195,8 @@ export default function App() {
       const res = await axios.post('/api/settings/discover', {
         url: accountForm.url,
         username: accountForm.username,
-        password: accountForm.password
+        password: accountForm.password,
+        accountId: editingAccount?.id
       });
       setDiscoveredCalendars(res.data);
       if (res.data.length === 0) {
