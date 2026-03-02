@@ -16,6 +16,7 @@ interface Document {
   year: number;
   timezone: string;
   caldav_account_id: string;
+  caldav_account_ids: string[];
   device_id: string;
 }
 
@@ -59,7 +60,7 @@ export default function App() {
     sync_schedule: '0 0 * * *', // Daily at midnight
     year: new Date().getFullYear(),
     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
-    caldav_account_id: '',
+    caldav_account_ids: [] as string[],
     device_id: ''
   });
 
@@ -350,7 +351,7 @@ export default function App() {
                         sync_schedule: '0 0 * * *',
                         year: new Date().getFullYear(),
                         timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
-                        caldav_account_id: accounts.length > 0 ? accounts[0].id : '',
+                        caldav_account_ids: accounts.length > 0 ? [accounts[0].id] : [],
                         device_id: devices.length > 0 ? devices[0].id : ''
                     });
                     setShowDocForm(true);
@@ -410,7 +411,7 @@ export default function App() {
                                             sync_schedule: doc.sync_schedule,
                                             year: doc.year || new Date().getFullYear(),
                                             timezone: doc.timezone || 'UTC',
-                                            caldav_account_id: doc.caldav_account_id,
+                                            caldav_account_ids: doc.caldav_account_ids || (doc.caldav_account_id ? [doc.caldav_account_id] : []),
                                             device_id: doc.device_id
                                         });
                                         setShowDocForm(true);
@@ -617,18 +618,29 @@ export default function App() {
                         />
                     </div>
                     <div>
-                        <label className="block text-sm font-medium mb-1">CalDAV Account</label>
-                        <select 
-                            required
-                            className="w-full px-3 py-2 border rounded-lg"
-                            value={docForm.caldav_account_id}
-                            onChange={e => setDocForm({...docForm, caldav_account_id: e.target.value})}
-                        >
-                            <option value="">Select Account</option>
-                            {accounts.map(a => (
-                                <option key={a.id} value={a.id}>{a.name}</option>
-                            ))}
-                        </select>
+                        <label className="block text-sm font-medium mb-2">CalDAV Accounts</label>
+                        <div className="space-y-2 max-h-40 overflow-y-auto p-3 border rounded-lg bg-stone-50">
+                            {accounts.length === 0 ? (
+                                <p className="text-xs text-stone-500 italic">No accounts configured. Go to Settings first.</p>
+                            ) : (
+                                accounts.map(a => (
+                                    <label key={a.id} className="flex items-center gap-2 cursor-pointer hover:bg-stone-100 p-1 rounded transition-colors">
+                                        <input 
+                                            type="checkbox"
+                                            className="rounded border-stone-300 text-stone-900 focus:ring-stone-500"
+                                            checked={docForm.caldav_account_ids.includes(a.id)}
+                                            onChange={e => {
+                                                const ids = e.target.checked 
+                                                    ? [...docForm.caldav_account_ids, a.id]
+                                                    : docForm.caldav_account_ids.filter(id => id !== a.id);
+                                                setDocForm({...docForm, caldav_account_ids: ids});
+                                            }}
+                                        />
+                                        <span className="text-sm">{a.name}</span>
+                                    </label>
+                                ))
+                            )}
+                        </div>
                     </div>
                     <div className="flex items-center gap-2">
                         <input 

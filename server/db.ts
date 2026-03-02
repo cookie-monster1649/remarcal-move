@@ -64,6 +64,14 @@ export function initDb() {
       FOREIGN KEY (caldav_account_id) REFERENCES caldav_accounts(id),
       FOREIGN KEY (device_id) REFERENCES devices(id)
     );
+
+    CREATE TABLE IF NOT EXISTS document_accounts (
+      document_id TEXT,
+      account_id TEXT,
+      PRIMARY KEY (document_id, account_id),
+      FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE,
+      FOREIGN KEY (account_id) REFERENCES caldav_accounts(id) ON DELETE CASCADE
+    );
   `);
 
   // Migrations: Add columns if they don't exist

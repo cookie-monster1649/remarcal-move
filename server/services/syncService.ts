@@ -13,62 +13,63 @@ const sshService = new SSHService();
 
 export class SyncService {
   async syncDocument(docId: string) {
-    // 1. Get Document & Account
+    // 1. Get Document
     const doc = db.prepare('SELECT * FROM documents WHERE id = ?').get(docId) as any;
     if (!doc) throw new Error(`Document ${docId} not found`);
 
-    if (!doc.caldav_account_id) throw new Error('No CalDAV account configured for this document');
-    const account = db.prepare('SELECT * FROM caldav_accounts WHERE id = ?').get(doc.caldav_account_id) as any;
-    if (!account) throw new Error('CalDAV account not found');
+    // Get all linked accounts
+    const linkedAccounts = db.prepare(`
+      SELECT a.* FROM caldav_accounts a
+      JOIN document_accounts da ON a.id = da.account_id
+      WHERE da.document_id = ?
+    `).all(docId) as any[];
+
+    // Fallback to legacy single account if no linked accounts found in join table
+    if (linkedAccounts.length === 0 && doc.caldav_account_id) {
+      const legacyAccount = db.prepare('SELECT * FROM caldav_accounts WHERE id = ?').get(doc.caldav_account_id) as any;
+      if (legacyAccount) linkedAccounts.push(legacyAccount);
+    }
+
+    if (linkedAccounts.length === 0) throw new Error('No CalDAV accounts configured for this document');
 
     // Update status to syncing
     db.prepare('UPDATE documents SET sync_status = ?, last_error = NULL WHERE id = ?').run('syncing', docId);
 
     try {
-      // 2. Fetch Events
-      const password = decrypt(account.encrypted_password);
+      // 2. Fetch Events from all accounts
       const year = doc.year || new Date().getFullYear();
       const targetTimezone = doc.timezone || 'UTC';
-      
       const startDate = `${year}-01-01`;
       const endDate = `${year}-12-31`;
-
-      let selectedCalendars = [];
-      try {
-        selectedCalendars = JSON.parse(account.selected_calendars || '[]');
-      } catch (e) {
-        console.warn('Failed to parse selected_calendars for account', account.id);
-      }
-
-      const calendarUrls = selectedCalendars.length > 0 
-        ? selectedCalendars.map((c: any) => c.url) 
-        : [account.url];
-
       const allEvents = [];
-      for (const url of calendarUrls) {
+
+      for (const account of linkedAccounts) {
+        const password = decrypt(account.encrypted_password);
+        let selectedCalendars = [];
         try {
-          const { events, timezone: calTz } = await calDavService.fetchEvents({
-            url,
-            username: account.username,
-            password: password,
-            startDate,
-            endDate
-          });
-          
-          // Process events to ensure they are in the target timezone
-          const processedEvents = events.map(e => {
-            // If the event has a specific timezone, we should respect it.
-            // However, for the PDF generation, we want to know what time it is in the USER'S target timezone.
-            // JS Date objects from ical.js are already absolute points in time.
-            return {
-              ...e,
-              // We pass the Date object. PDFService will need to format it using the target timezone.
-            };
-          });
-          
-          allEvents.push(...processedEvents);
-        } catch (err: any) {
-          console.warn(`Failed to fetch events for calendar ${url}:`, err.message);
+          selectedCalendars = JSON.parse(account.selected_calendars || '[]');
+        } catch (e) {
+          console.warn('Failed to parse selected_calendars for account', account.id);
+        }
+
+        const calendarUrls = selectedCalendars.length > 0 
+          ? selectedCalendars.map((c: any) => c.url) 
+          : [account.url];
+
+        for (const url of calendarUrls) {
+          try {
+            const { events } = await calDavService.fetchEvents({
+              url,
+              username: account.username,
+              password: password,
+              startDate,
+              endDate
+            });
+            
+            allEvents.push(...events);
+          } catch (err: any) {
+            console.warn(`Failed to fetch events for account ${account.name} calendar ${url}:`, err.message);
+          }
         }
       }
 
