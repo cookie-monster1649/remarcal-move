@@ -66,6 +66,15 @@ export class PDFService {
         }
     };
 
+    const getTzFormat = (date: Date, fmt: string, options?: any) => {
+        if (!date || isNaN(date.getTime())) return '';
+        try {
+            return formatInTimeZone(date, tz, fmt, options);
+        } catch (e) {
+            return '';
+        }
+    };
+
     // 1. Setup Dimensions & Constants
     const DPI = 226;
     const pxToMm = (px: number) => (px / DPI) * 25.4;
@@ -106,11 +115,11 @@ export class PDFService {
     let currentWeekKey = '';
     
     allDays.forEach((day) => {
-      const monthKey = format(day, 'yyyy-MM');
-      const weekKey = format(day, 'yyyy-ww', { weekStartsOn: 1 });
+      const monthKey = getTzFormat(day, 'yyyy-MM');
+      const weekKey = getTzFormat(day, 'yyyy-ww', { weekStartsOn: 1 });
       
       // New Month?
-      if (monthKey !== currentMonthKey && day.getDate() === 1) {
+      if (monthKey !== currentMonthKey && parseInt(getTzFormat(day, 'd')) === 1) {
         currentPage++;
         pageMap.months[monthKey] = currentPage;
         currentMonthKey = monthKey;
@@ -127,7 +136,7 @@ export class PDFService {
       
       // Daily View
       currentPage++;
-      pageMap.days[format(day, 'yyyy-MM-dd')] = currentPage;
+      pageMap.days[getTzDateStr(day)] = currentPage;
     });
 
     // 3. Helper Functions for Rendering
@@ -150,7 +159,7 @@ export class PDFService {
         const centerY = navY + 4.5;
         
         // Year Link
-        const yearStr = format(currentDate, 'yyyy');
+        const yearStr = getTzFormat(currentDate, 'yyyy');
         doc.text(yearStr, cursorX, centerY);
         doc.link(cursorX, navY, 8, navH, { pageNumber: pageMap.year });
         cursorX += 7; 
@@ -168,15 +177,15 @@ export class PDFService {
         const monthSlotW = availableW / 12;
         
         months.forEach((m, i) => {
-            const mDate = new Date(currentDate.getFullYear(), i, 1);
-            const mKey = format(mDate, 'yyyy-MM');
+            const mDate = new Date(config.year, i, 1);
+            const mKey = getTzFormat(mDate, 'yyyy-MM');
             const targetPage = pageMap.months[mKey];
             
             const slotX = cursorX + (i * monthSlotW);
             const textW = doc.getTextWidth(m);
             const textX = slotX + (monthSlotW - textW) / 2;
             
-            if (i === currentDate.getMonth()) {
+            if (i === parseInt(getTzFormat(currentDate, 'M')) - 1) {
                 doc.setFillColor(50, 50, 50);
                 doc.roundedRect(textX - 1, navY + 1.5, textW + 2, 4, 1, 1, 'F');
                 doc.setTextColor(255);
@@ -199,8 +208,8 @@ export class PDFService {
         
         // Week Link
         if (showWeek) {
-            const weekStr = `Wk ${format(currentDate, 'ww', { weekStartsOn: 1 })}`;
-            const wKey = format(currentDate, 'yyyy-ww', { weekStartsOn: 1 });
+            const weekStr = `Wk ${getTzFormat(currentDate, 'ww', { weekStartsOn: 1 })}`;
+            const wKey = getTzFormat(currentDate, 'yyyy-ww', { weekStartsOn: 1 });
             const wPage = pageMap.weeks[wKey];
             
             const weekWidth = 10;
@@ -239,11 +248,11 @@ export class PDFService {
         
         doc.setFontSize(10);
         doc.setFont("helvetica", "normal");
-        doc.text(format(mDate, 'MMMM'), x + yColWidth/2, y + 5, { align: 'center' });
+        doc.text(getTzFormat(mDate, 'MMMM'), x + yColWidth/2, y + 5, { align: 'center' });
         
-        const mKey = format(mDate, 'yyyy-MM');
+        const mKey = getTzFormat(mDate, 'yyyy-MM');
         if (pageMap.months[mKey]) {
-            const textWidth = doc.getTextWidth(format(mDate, 'MMMM'));
+            const textWidth = doc.getTextWidth(getTzFormat(mDate, 'MMMM'));
             doc.link(x + yColWidth/2 - textWidth/2 - 2, y, textWidth + 4, 6, { pageNumber: pageMap.months[mKey] });
         }
         
@@ -270,7 +279,7 @@ export class PDFService {
             const dX = x + 2 + (c * cellW);
             const dY = y + 13 + (r * cellH);
             
-            const hasEvent = events.some(e => getTzDateStr(e.start) === format(d, 'yyyy-MM-dd'));
+            const hasEvent = events.some(e => getTzDateStr(e.start) === getTzDateStr(d));
             if (hasEvent) {
                 doc.setFont("helvetica", "bold");
                 doc.setFillColor(220, 220, 220);
@@ -281,7 +290,7 @@ export class PDFService {
             
             doc.text(date.toString(), dX + cellW/2, dY, { align: 'center' });
             
-            const dKey = format(d, 'yyyy-MM-dd');
+            const dKey = getTzDateStr(d);
             if (pageMap.days[dKey]) {
                 doc.link(dX, dY - 2, cellW, cellH, { pageNumber: pageMap.days[dKey] });
             }
@@ -295,17 +304,17 @@ export class PDFService {
     const renderedWeeks = new Set<string>();
 
     allDays.forEach((day) => {
-        const monthKey = format(day, 'yyyy-MM');
-        const weekKey = format(day, 'yyyy-ww', { weekStartsOn: 1 });
+        const monthKey = getTzFormat(day, 'yyyy-MM');
+        const weekKey = getTzFormat(day, 'yyyy-ww', { weekStartsOn: 1 });
         
         // --- Month View ---
-        if (monthKey !== currentMonthKey && day.getDate() === 1) {
+        if (monthKey !== currentMonthKey && parseInt(getTzFormat(day, 'd')) === 1) {
             doc.addPage();
             currentMonthKey = monthKey;
             
             doc.setFontSize(14);
             doc.setFont("helvetica", "normal");
-            doc.text(format(day, 'MMMM yyyy'), pageWidth / 2, 10, { align: 'center' });
+            doc.text(getTzFormat(day, 'MMMM yyyy'), pageWidth / 2, 10, { align: 'center' });
             
             drawNavBar(day, false);
             
@@ -334,8 +343,8 @@ export class PDFService {
             for(let i=0; i<6; i++) {
                 const wDate = addDays(gridStart, i*7);
                 if (i * 7 < mDays.length) {
-                    const wNum = format(wDate, 'ww', { weekStartsOn: 1 });
-                    const wKey = format(wDate, 'yyyy-ww', { weekStartsOn: 1 });
+                    const wNum = getTzFormat(wDate, 'ww', { weekStartsOn: 1 });
+                    const wKey = getTzFormat(wDate, 'yyyy-ww', { weekStartsOn: 1 });
                     const yPos = gridY + i*cellH + cellH/2;
                     
                     doc.text(`W${wNum}`, 1, yPos);
@@ -355,25 +364,25 @@ export class PDFService {
                 const x = gridX + c*cellW;
                 const y = gridY + r*cellH;
                 
-                const isCurrentMonth = isSameMonth(d, day);
+                const isCurrentMonth = getTzFormat(d, 'yyyy-MM') === getTzFormat(day, 'yyyy-MM');
                 doc.setTextColor(isCurrentMonth ? 0 : 150);
                 
                 doc.setFontSize(7);
                 doc.setFont("helvetica", "bold");
-                const dayName = format(d, 'EEE');
+                const dayName = getTzFormat(d, 'EEE');
                 doc.text(dayName, x + 2, y + 4);
 
                 doc.setFontSize(9);
                 doc.setFont("helvetica", "normal");
                 doc.setTextColor(150);
-                doc.text(d.getDate().toString(), x + cellW - 2, y + 4, { align: 'right' });
+                doc.text(getTzFormat(d, 'd'), x + cellW - 2, y + 4, { align: 'right' });
                 
-                const dKey = format(d, 'yyyy-MM-dd');
+                const dKey = getTzDateStr(d);
                 if (pageMap.days[dKey]) {
                     doc.link(x, y, cellW, cellH, { pageNumber: pageMap.days[dKey] });
                 }
                 
-                const currentDayStr = format(d, 'yyyy-MM-dd');
+                const currentDayStr = getTzDateStr(d);
                 const dayEvents = events.filter(e => {
                     const startStr = getTzDateStr(e.start);
                     const endStr = getTzDateStr(e.end);
@@ -408,7 +417,7 @@ export class PDFService {
              
              doc.setFontSize(12);
              doc.setFont("helvetica", "normal");
-             doc.text(`Week ${format(day, 'ww', { weekStartsOn: 1 })} | ${format(wStart, 'MMM d')} - ${format(wEnd, 'MMM d')}`, pageWidth/2, 10, { align: 'center' });
+             doc.text(`Week ${getTzFormat(day, 'ww', { weekStartsOn: 1 })} | ${getTzFormat(wStart, 'MMM d')} - ${getTzFormat(wEnd, 'MMM d')}`, pageWidth/2, 10, { align: 'center' });
              
              drawNavBar(day);
              
@@ -439,20 +448,20 @@ export class PDFService {
                  doc.setFontSize(10);
                  doc.setFont("helvetica", "bold");
                  doc.setTextColor(0);
-                 const dayName = format(d, 'EEE');
+                 const dayName = getTzFormat(d, 'EEE');
                  doc.text(dayName, x + cellW - 12, y + 6, { align: 'right' });
                  
                  doc.setFont("helvetica", "normal");
                  doc.setTextColor(150);
-                 const dateNum = format(d, 'd');
+                 const dateNum = getTzFormat(d, 'd');
                  doc.text(dateNum, x + cellW - 4, y + 6, { align: 'right' });
                  
-                 const dKey = format(d, 'yyyy-MM-dd');
+                 const dKey = getTzDateStr(d);
                  if (pageMap.days[dKey]) {
                      doc.link(x, y, cellW, 8, { pageNumber: pageMap.days[dKey] });
                  }
                  
-                 const currentDayStr = format(d, 'yyyy-MM-dd');
+                 const currentDayStr = getTzDateStr(d);
                  const dayEvents = events.filter(e => {
                      const startStr = getTzDateStr(e.start);
                      const endStr = getTzDateStr(e.end);
@@ -496,7 +505,7 @@ export class PDFService {
         
         doc.setFontSize(14);
         doc.setFont("helvetica", "normal");
-        doc.text(format(day, 'EEEE, MMMM d, yyyy'), pageWidth/2, 10, { align: 'center' });
+        doc.text(getTzFormat(day, 'EEEE, MMMM d, yyyy'), pageWidth/2, 10, { align: 'center' });
         
         drawNavBar(day);
         
@@ -517,7 +526,7 @@ export class PDFService {
         doc.setTextColor(150);
         doc.text("All day", 7, contentY + 6); 
         
-        const currentDayStr = format(day, 'yyyy-MM-dd');
+        const currentDayStr = getTzDateStr(day);
         const allDayEvents = events.filter(e => {
             const startStr = getTzDateStr(e.start);
             const endStr = getTzDateStr(e.end);
