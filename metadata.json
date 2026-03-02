@@ -1,0 +1,5 @@
+{
+  "name": "Remarcal Clone",
+  "description": "A tool to generate reMarkable planner PDFs from CalDAV calendars.",
+  "requestFramePermissions": []
+}
