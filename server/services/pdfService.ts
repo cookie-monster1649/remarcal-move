@@ -1,5 +1,6 @@
 import { jsPDF } from 'jspdf';
 import { format, addDays, startOfWeek, endOfWeek, startOfMonth, endOfMonth, eachDayOfInterval, isSameMonth, isSameDay, parseISO } from 'date-fns';
+import { toZonedTime } from 'date-fns-tz';
 
 export interface CalendarEvent {
   summary: string;
@@ -12,6 +13,7 @@ export interface CalendarEvent {
 
 export interface PDFConfig {
   year: number;
+  timezone?: string;
 }
 
 export class PDFService {
@@ -220,7 +222,10 @@ export class PDFService {
             const dX = x + 2 + (c * cellW);
             const dY = y + 13 + (r * cellH);
             
-            const hasEvent = events.some(e => isSameDay(e.start, d));
+            const hasEvent = events.some(e => {
+                const tzStart = config.timezone ? toZonedTime(e.start, config.timezone) : e.start;
+                return isSameDay(tzStart, d);
+            });
             if (hasEvent) {
                 doc.setFont("helvetica", "bold");
                 doc.setFillColor(220, 220, 220);
@@ -323,7 +328,10 @@ export class PDFService {
                     doc.link(x, y, cellW, cellH, { pageNumber: pageMap.days[dKey] });
                 }
                 
-                const dayEvents = events.filter(e => isSameDay(e.start, d));
+                const dayEvents = events.filter(e => {
+                    const tzStart = config.timezone ? toZonedTime(e.start, config.timezone) : e.start;
+                    return isSameDay(tzStart, d);
+                });
                 let eventY = y + 8;
                 doc.setFontSize(5);
                 doc.setTextColor(0);
@@ -390,14 +398,18 @@ export class PDFService {
                      doc.link(x, y, cellW, 8, { pageNumber: pageMap.days[dKey] });
                  }
                  
-                 const dayEvents = events.filter(e => isSameDay(e.start, d));
+                 const dayEvents = events.filter(e => {
+                     const tzStart = config.timezone ? toZonedTime(e.start, config.timezone) : e.start;
+                     return isSameDay(tzStart, d);
+                 });
                  let eventY = y + 12;
                  doc.setFontSize(6);
                  doc.setFont("helvetica", "normal");
                  doc.setTextColor(0);
                  dayEvents.forEach(e => {
                      if (eventY < y + cellH - 5) {
-                         const time = format(e.start, 'HH:mm');
+                         const tzStart = config.timezone ? toZonedTime(e.start, config.timezone) : e.start;
+                         const time = format(tzStart, 'HH:mm');
                          const summary = truncate(e.summary, 20);
                          doc.roundedRect(x + 2, eventY, cellW - 4, 5, 1, 1, 'S');
                          doc.text(`${time} ${summary}`, x + 3, eventY + 3.5);
@@ -444,9 +456,11 @@ export class PDFService {
         doc.text("All day", 7, contentY + 6); 
         
         const allDayEvents = events.filter(e => {
-            const duration = e.end.getTime() - e.start.getTime();
-            const isMidnight = e.start.getHours() === 0 && e.start.getMinutes() === 0;
-            return isSameDay(e.start, day) && (duration >= 86400000 || isMidnight);
+            const tzStart = config.timezone ? toZonedTime(e.start, config.timezone) : e.start;
+            const tzEnd = config.timezone ? toZonedTime(e.end, config.timezone) : e.end;
+            const duration = tzEnd.getTime() - tzStart.getTime();
+            const isMidnight = tzStart.getHours() === 0 && tzStart.getMinutes() === 0;
+            return isSameDay(tzStart, day) && (duration >= 86400000 || isMidnight);
         });
         
         let adX = 35; 
@@ -492,15 +506,20 @@ export class PDFService {
         }
         
         const dayEvents = events.filter(e => {
-            const duration = e.end.getTime() - e.start.getTime();
-            const isMidnight = e.start.getHours() === 0 && e.start.getMinutes() === 0;
+            const tzStart = config.timezone ? toZonedTime(e.start, config.timezone) : e.start;
+            const tzEnd = config.timezone ? toZonedTime(e.end, config.timezone) : e.end;
+            const duration = tzEnd.getTime() - tzStart.getTime();
+            const isMidnight = tzStart.getHours() === 0 && tzStart.getMinutes() === 0;
             if (duration >= 86400000 || isMidnight) return false;
-            return isSameDay(e.start, day);
+            return isSameDay(tzStart, day);
         });
         
         const items = dayEvents.map(e => {
-            let startH = e.start.getHours() + e.start.getMinutes() / 60;
-            let endH = e.end.getHours() + e.end.getMinutes() / 60;
+            const tzStart = config.timezone ? toZonedTime(e.start, config.timezone) : e.start;
+            const tzEnd = config.timezone ? toZonedTime(e.end, config.timezone) : e.end;
+            
+            let startH = tzStart.getHours() + tzStart.getMinutes() / 60;
+            let endH = tzEnd.getHours() + tzEnd.getMinutes() / 60;
             if (endH < startH) endH += 24;
             
             if (startH < startHour) startH = startHour;

@@ -20,7 +20,85 @@ export interface CalendarEvent {
   allDay?: boolean;
 }
 
+export interface CalendarInfo {
+  url: string;
+  name: string;
+  color?: string;
+}
+
 export class CalDavService {
+  async discoverCalendars(config: Partial<CalDavConfig>): Promise<CalendarInfo[]> {
+    const { url, username, password } = config;
+    if (!url) throw new Error('URL is required for discovery');
+
+    const xmlBody = `
+      <d:propfind xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav">
+        <d:prop>
+          <d:displayname />
+          <d:resourcetype />
+          <c:calendar-description />
+          <c:calendar-color xmlns:apple="http://apple.com/ns/ical/" />
+        </d:prop>
+      </d:propfind>
+    `;
+
+    try {
+      const response = await axios({
+        method: 'PROPFIND',
+        url: url,
+        auth: username && password ? { username, password } : undefined,
+        headers: {
+          'Content-Type': 'application/xml; charset=utf-8',
+          'Depth': '1'
+        },
+        data: xmlBody
+      });
+
+      const result = await parseStringPromise(response.data, {
+        tagNameProcessors: [(name) => {
+          const parts = name.split(':');
+          return parts.length > 1 ? parts[1] : name;
+        }],
+        explicitArray: false,
+        mergeAttrs: true
+      });
+
+      const calendars: CalendarInfo[] = [];
+      const responses = Array.isArray(result.multistatus.response) 
+        ? result.multistatus.response 
+        : [result.multistatus.response];
+
+      for (const r of responses) {
+        const prop = r.propstat?.prop || r.prop;
+        if (!prop) continue;
+
+        const resourcetype = prop.resourcetype;
+        const isCalendar = resourcetype && (
+          (resourcetype.calendar !== undefined) || 
+          (Array.isArray(resourcetype) && resourcetype.some((t: any) => t.calendar !== undefined))
+        );
+
+        if (isCalendar) {
+          let href = r.href;
+          if (!href.startsWith('http')) {
+            href = new URL(href, url).href;
+          }
+
+          calendars.push({
+            url: href,
+            name: prop.displayname || prop['calendar-description'] || href.split('/').filter(Boolean).pop() || 'Unnamed Calendar',
+            color: prop['calendar-color']
+          });
+        }
+      }
+
+      return calendars;
+    } catch (error: any) {
+      console.error('CalDAV Discovery Error:', error.message);
+      throw new Error(`CalDAV discovery failed: ${error.message}`);
+    }
+  }
+
   async fetchEvents(config: CalDavConfig): Promise<CalendarEvent[]> {
     const { url, username, password, startDate, endDate } = config;
 

@@ -62,23 +62,11 @@ export class SyncService {
         const device = db.prepare('SELECT * FROM devices WHERE id = ?').get(doc.device_id) as any;
         if (!device) throw new Error('Device not found');
         
-        let privateKeyContent: string | undefined;
-        if (device.private_key_path) {
-            try {
-                if (fs.existsSync(device.private_key_path)) {
-                    privateKeyContent = fs.readFileSync(device.private_key_path, 'utf8');
-                }
-            } catch (e) {
-                console.warn(`Failed to read private key for device ${doc.device_id}:`, e);
-            }
-        }
-
         const sshConfig = {
             host: device.host,
             username: device.username,
             port: device.port,
-            password: device.encrypted_password ? decrypt(device.encrypted_password) : undefined,
-            privateKey: privateKeyContent
+            password: device.encrypted_password ? decrypt(device.encrypted_password) : undefined
         };
         
         const deviceSshService = new SSHService(sshConfig);

@@ -40,7 +40,11 @@ export default function App() {
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [devices, setDevices] = useState<Device[]>([]);
   const [loading, setLoading] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [modalError, setModalError] = useState<string | null>(null);
+  const [discoveredCalendars, setDiscoveredCalendars] = useState<{url: string, name: string}[]>([]);
+  const [discovering, setDiscovering] = useState(false);
   const [deviceStatus, setDeviceStatus] = useState<Record<string, 'connected' | 'disconnected' | 'checking'>>({});
 
   // Forms state
@@ -72,8 +76,7 @@ export default function App() {
     host: '',
     username: 'root',
     password: '',
-    port: 22,
-    private_key_path: ''
+    port: 22
   });
 
   const fetchData = async () => {
@@ -141,6 +144,8 @@ export default function App() {
 
   const handleDocSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setSubmitting(true);
+    setModalError(null);
     try {
       if (editingDoc) {
         await axios.put(`/api/library/${editingDoc.id}`, docForm);
@@ -151,12 +156,16 @@ export default function App() {
       setEditingDoc(null);
       fetchData();
     } catch (err: any) {
-      alert(err.response?.data?.error || err.message);
+      setModalError(err.response?.data?.error || err.message);
+    } finally {
+      setSubmitting(false);
     }
   };
 
   const handleAccountSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setSubmitting(true);
+    setModalError(null);
     try {
       if (editingAccount) {
         await axios.put(`/api/settings/${editingAccount.id}`, accountForm);
@@ -166,14 +175,43 @@ export default function App() {
       setShowAccountForm(false);
       setEditingAccount(null);
       setAccountForm({ name: '', url: '', username: '', password: '', calendar_id: '' });
+      setDiscoveredCalendars([]);
       fetchData();
     } catch (err: any) {
-      alert(err.response?.data?.error || err.message);
+      setModalError(err.response?.data?.error || err.message);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleDiscover = async () => {
+    if (!accountForm.url) {
+      setModalError('Please enter a CalDAV URL first');
+      return;
+    }
+    setDiscovering(true);
+    setModalError(null);
+    try {
+      const res = await axios.post('/api/settings/discover', {
+        url: accountForm.url,
+        username: accountForm.username,
+        password: accountForm.password
+      });
+      setDiscoveredCalendars(res.data);
+      if (res.data.length === 0) {
+        setModalError('No calendars found at this URL');
+      }
+    } catch (err: any) {
+      setModalError(err.response?.data?.error || err.message);
+    } finally {
+      setDiscovering(false);
     }
   };
 
   const handleDeviceSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setSubmitting(true);
+    setModalError(null);
     try {
       if (editingDevice) {
         await axios.put(`/api/devices/${editingDevice.id}`, deviceForm);
@@ -182,10 +220,12 @@ export default function App() {
       }
       setShowDeviceForm(false);
       setEditingDevice(null);
-      setDeviceForm({ name: '', host: '', username: 'root', password: '', port: 22, private_key_path: '' });
+      setDeviceForm({ name: '', host: '', username: 'root', password: '', port: 22 });
       fetchData();
     } catch (err: any) {
-      alert(err.response?.data?.error || err.message);
+      setModalError(err.response?.data?.error || err.message);
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -393,7 +433,7 @@ export default function App() {
               <button 
                 onClick={() => {
                     setEditingDevice(null);
-                    setDeviceForm({ name: '', host: '', username: 'root', password: '', port: 22, private_key_path: '' });
+                    setDeviceForm({ name: '', host: '', username: 'root', password: '', port: 22 });
                     setShowDeviceForm(true);
                 }}
                 className="flex items-center px-4 py-2 bg-stone-900 text-white rounded-lg hover:bg-stone-800"
@@ -421,7 +461,7 @@ export default function App() {
                             <button 
                                 onClick={() => {
                                     setEditingDevice(dev);
-                                    setDeviceForm({ ...dev, password: '', private_key_path: '' }); // Don't show password
+                                    setDeviceForm({ ...dev, password: '' }); // Don't show password
                                     setShowDeviceForm(true);
                                 }}
                                 className="p-2 text-stone-500 hover:text-stone-900 hover:bg-stone-100 rounded-lg"
@@ -496,6 +536,12 @@ export default function App() {
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
             <div className="bg-white rounded-2xl p-8 max-w-md w-full shadow-xl max-h-[90vh] overflow-y-auto">
                 <h3 className="text-xl font-bold mb-4">{editingDoc ? 'Edit Document' : 'New Document'}</h3>
+                {modalError && (
+                    <div className="mb-4 p-3 bg-red-50 text-red-700 rounded-lg text-sm flex items-center gap-2">
+                        <XCircle size={16} />
+                        {modalError}
+                    </div>
+                )}
                 <form onSubmit={handleDocSubmit} className="space-y-4">
                     <div>
                         <label className="block text-sm font-medium mb-1">Title</label>
@@ -578,8 +624,10 @@ export default function App() {
                         </button>
                         <button 
                             type="submit"
-                            className="px-4 py-2 bg-stone-900 text-white rounded-lg hover:bg-stone-800"
+                            disabled={submitting}
+                            className="px-4 py-2 bg-stone-900 text-white rounded-lg hover:bg-stone-800 disabled:opacity-50 flex items-center gap-2"
                         >
+                            {submitting && <RefreshCw size={16} className="animate-spin" />}
                             Save
                         </button>
                     </div>
@@ -593,6 +641,12 @@ export default function App() {
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
             <div className="bg-white rounded-2xl p-8 max-w-md w-full shadow-xl">
                 <h3 className="text-xl font-bold mb-4">{editingDevice ? 'Edit Device' : 'New Device'}</h3>
+                {modalError && (
+                    <div className="mb-4 p-3 bg-red-50 text-red-700 rounded-lg text-sm flex items-center gap-2">
+                        <XCircle size={16} />
+                        {modalError}
+                    </div>
+                )}
                 <form onSubmit={handleDeviceSubmit} className="space-y-4">
                     <div>
                         <label className="block text-sm font-medium mb-1">Name</label>
@@ -645,17 +699,7 @@ export default function App() {
                             className="w-full px-3 py-2 border rounded-lg"
                             value={deviceForm.password}
                             onChange={e => setDeviceForm({...deviceForm, password: e.target.value})}
-                            placeholder={editingDevice ? "(Unchanged)" : "Optional if using key"}
-                        />
-                    </div>
-                    <div>
-                        <label className="block text-sm font-medium mb-1">Private Key Path (Server-side)</label>
-                        <input 
-                            type="text" 
-                            className="w-full px-3 py-2 border rounded-lg font-mono text-xs"
-                            value={deviceForm.private_key_path}
-                            onChange={e => setDeviceForm({...deviceForm, private_key_path: e.target.value})}
-                            placeholder="/app/ssh_key"
+                            placeholder={editingDevice ? "(Unchanged)" : "Required"}
                         />
                     </div>
                     <div className="flex justify-end gap-2 mt-6">
@@ -668,8 +712,10 @@ export default function App() {
                         </button>
                         <button 
                             type="submit"
-                            className="px-4 py-2 bg-stone-900 text-white rounded-lg hover:bg-stone-800"
+                            disabled={submitting}
+                            className="px-4 py-2 bg-stone-900 text-white rounded-lg hover:bg-stone-800 disabled:opacity-50 flex items-center gap-2"
                         >
+                            {submitting && <RefreshCw size={16} className="animate-spin" />}
                             {editingDevice ? 'Save & Test' : 'Create & Test'}
                         </button>
                     </div>
@@ -683,6 +729,12 @@ export default function App() {
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
             <div className="bg-white rounded-2xl p-8 max-w-md w-full shadow-xl">
                 <h3 className="text-xl font-bold mb-4">{editingAccount ? 'Edit Account' : 'New Account'}</h3>
+                {modalError && (
+                    <div className="mb-4 p-3 bg-red-50 text-red-700 rounded-lg text-sm flex items-center gap-2">
+                        <XCircle size={16} />
+                        {modalError}
+                    </div>
+                )}
                 <form onSubmit={handleAccountSubmit} className="space-y-4">
                     <div>
                         <label className="block text-sm font-medium mb-1">Name</label>
@@ -717,15 +769,46 @@ export default function App() {
                     </div>
                     <div>
                         <label className="block text-sm font-medium mb-1">Password / Token</label>
-                        <input 
-                            type="password" 
-                            required={!editingAccount}
-                            className="w-full px-3 py-2 border rounded-lg"
-                            value={accountForm.password}
-                            onChange={e => setAccountForm({...accountForm, password: e.target.value})}
-                            placeholder={editingAccount ? "(Unchanged)" : ""}
-                        />
+                        <div className="flex gap-2">
+                            <input 
+                                type="password" 
+                                required={!editingAccount}
+                                className="flex-1 px-3 py-2 border rounded-lg"
+                                value={accountForm.password}
+                                onChange={e => setAccountForm({...accountForm, password: e.target.value})}
+                                placeholder={editingAccount ? "(Unchanged)" : ""}
+                            />
+                            <button 
+                                type="button"
+                                onClick={handleDiscover}
+                                disabled={discovering}
+                                className="px-3 py-2 bg-stone-100 text-stone-900 border border-stone-200 rounded-lg text-sm font-medium hover:bg-stone-200 disabled:opacity-50 flex items-center gap-1"
+                            >
+                                {discovering ? <RefreshCw size={14} className="animate-spin" /> : <Plus size={14} />}
+                                Discover
+                            </button>
+                        </div>
                     </div>
+
+                    {discoveredCalendars.length > 0 && (
+                        <div className="bg-stone-50 p-3 rounded-lg border border-stone-200">
+                            <label className="block text-xs font-bold text-stone-500 uppercase mb-2">Discovered Calendars</label>
+                            <div className="space-y-1 max-h-40 overflow-y-auto">
+                                {discoveredCalendars.map(cal => (
+                                    <button
+                                        key={cal.url}
+                                        type="button"
+                                        onClick={() => setAccountForm({ ...accountForm, url: cal.url, name: cal.name })}
+                                        className="w-full text-left px-2 py-1.5 text-sm hover:bg-white rounded border border-transparent hover:border-stone-200 flex justify-between items-center group"
+                                    >
+                                        <span className="truncate">{cal.name}</span>
+                                        <span className="text-[10px] text-stone-400 opacity-0 group-hover:opacity-100">Select</span>
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
                     <div className="flex justify-end gap-2 mt-6">
                         <button 
                             type="button"
@@ -736,8 +819,10 @@ export default function App() {
                         </button>
                         <button 
                             type="submit"
-                            className="px-4 py-2 bg-stone-900 text-white rounded-lg hover:bg-stone-800"
+                            disabled={submitting}
+                            className="px-4 py-2 bg-stone-900 text-white rounded-lg hover:bg-stone-800 disabled:opacity-50 flex items-center gap-2"
                         >
+                            {submitting && <RefreshCw size={16} className="animate-spin" />}
                             Save
                         </button>
                     </div>

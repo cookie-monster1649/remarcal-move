@@ -14,30 +14,16 @@ router.get('/', (req, res) => {
 
 // Create Device
 router.post('/', async (req, res) => {
-  const { name, host, username, password, port, private_key_path } = req.body;
+  const { name, host, username, password, port } = req.body;
   const id = uuidv4();
   
   try {
     // Validate connection first
-    let privateKeyContent: string | undefined;
-    if (private_key_path) {
-        try {
-            if (fs.existsSync(private_key_path)) {
-                privateKeyContent = fs.readFileSync(private_key_path, 'utf8');
-            } else {
-                return res.status(400).json({ error: `Private key file not found at ${private_key_path}` });
-            }
-        } catch (e: any) {
-            return res.status(400).json({ error: `Failed to read private key: ${e.message}` });
-        }
-    }
-
     const testService = new SSHService({
         host,
         username,
         port: parseInt(port || '22', 10),
-        password,
-        privateKey: privateKeyContent
+        password
     });
 
     // Test connection
@@ -50,11 +36,11 @@ router.post('/', async (req, res) => {
     const encrypted_password = password ? encrypt(password) : null;
     
     const stmt = db.prepare(`
-      INSERT INTO devices (id, name, host, username, encrypted_password, port, private_key_path, last_connected_at, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO devices (id, name, host, username, encrypted_password, port, last_connected_at, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `);
     
-    stmt.run(id, name, host, username, encrypted_password, port || 22, private_key_path, new Date().toISOString(), new Date().toISOString());
+    stmt.run(id, name, host, username, encrypted_password, port || 22, new Date().toISOString(), new Date().toISOString());
     
     res.json({ id, message: 'Device created and verified' });
   } catch (err: any) {
@@ -65,23 +51,9 @@ router.post('/', async (req, res) => {
 // Update Device
 router.put('/:id', async (req, res) => {
   const { id } = req.params;
-  const { name, host, username, password, port, private_key_path } = req.body;
+  const { name, host, username, password, port } = req.body;
   
   try {
-    // Validate connection first
-    let privateKeyContent: string | undefined;
-    if (private_key_path) {
-        try {
-            if (fs.existsSync(private_key_path)) {
-                privateKeyContent = fs.readFileSync(private_key_path, 'utf8');
-            } else {
-                return res.status(400).json({ error: `Private key file not found at ${private_key_path}` });
-            }
-        } catch (e: any) {
-            return res.status(400).json({ error: `Failed to read private key: ${e.message}` });
-        }
-    }
-    
     let passwordToTest = password;
     let encrypted_password = null;
 
@@ -99,8 +71,7 @@ router.put('/:id', async (req, res) => {
         host,
         username,
         port: parseInt(port || '22', 10),
-        password: passwordToTest,
-        privateKey: privateKeyContent
+        password: passwordToTest
     });
 
     try {
@@ -111,9 +82,9 @@ router.put('/:id', async (req, res) => {
 
     db.prepare(`
       UPDATE devices 
-      SET name = ?, host = ?, username = ?, encrypted_password = ?, port = ?, private_key_path = ?, last_connected_at = ?
+      SET name = ?, host = ?, username = ?, encrypted_password = ?, port = ?, last_connected_at = ?
       WHERE id = ?
-    `).run(name, host, username, encrypted_password, port || 22, private_key_path, new Date().toISOString(), id);
+    `).run(name, host, username, encrypted_password, port || 22, new Date().toISOString(), id);
     
     res.json({ message: 'Device updated and verified' });
   } catch (err: any) {
@@ -162,23 +133,11 @@ router.post('/:id/check', async (req, res) => {
         const device = db.prepare('SELECT * FROM devices WHERE id = ?').get(id) as any;
         if (!device) return res.status(404).json({ error: 'Device not found' });
 
-        let privateKeyContent: string | undefined;
-        if (device.private_key_path) {
-            try {
-                if (fs.existsSync(device.private_key_path)) {
-                    privateKeyContent = fs.readFileSync(device.private_key_path, 'utf8');
-                }
-            } catch (e) {
-                console.warn(`Failed to read private key for device ${id}:`, e);
-            }
-        }
-
         const sshConfig = {
             host: device.host,
             username: device.username,
             port: device.port,
-            password: device.encrypted_password ? decrypt(device.encrypted_password) : undefined,
-            privateKey: privateKeyContent
+            password: device.encrypted_password ? decrypt(device.encrypted_password) : undefined
         };
 
         const service = new SSHService(sshConfig);

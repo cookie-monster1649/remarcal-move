@@ -6,10 +6,14 @@ import * as crypto from 'crypto';
 export interface SSHConfig {
   host?: string;
   username?: string;
-  privateKey?: string;
-  passphrase?: string;
   password?: string;
   port?: number; // Add port
+}
+
+export interface DeviceFile {
+  uuid: string;
+  name: string;
+  lastModified: Date;
 }
 
 // ...
@@ -22,27 +26,11 @@ export class SSHService {
   }
 
   private getConfig() {
-    let privateKey: string | undefined = this.config.privateKey;
-    
-    // Try to load private key from env path if not provided in config AND no password provided
-    // If config has password, we might not need key.
-    if (!privateKey && !this.config.password && process.env.REMARKABLE_SSH_KEY_PATH) {
-        try {
-            if (fs.existsSync(process.env.REMARKABLE_SSH_KEY_PATH)) {
-                privateKey = fs.readFileSync(process.env.REMARKABLE_SSH_KEY_PATH, 'utf8');
-            }
-        } catch (e) {
-            console.warn('Failed to read SSH key from path:', process.env.REMARKABLE_SSH_KEY_PATH);
-        }
-    }
-
     // Prioritize config (DB) over env vars
     return {
       host: this.config.host || process.env.REMARKABLE_HOST,
       port: this.config.port || parseInt(process.env.REMARKABLE_PORT || '22', 10),
       username: this.config.username || process.env.REMARKABLE_USER || 'root',
-      privateKey: privateKey,
-      passphrase: this.config.passphrase,
       password: this.config.password || process.env.REMARKABLE_PASSWORD,
     };
   }
@@ -66,10 +54,9 @@ export class SSHService {
             host: config.host,
             port: config.port,
             username: config.username,
-            privateKey: config.privateKey,
-            passphrase: config.passphrase,
             password: config.password,
             readyTimeout: 20000,
+            tryKeyboard: true,
           });
     });
   }

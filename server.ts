@@ -7,7 +7,6 @@ import { schedulerService } from './server/services/schedulerService.js';
 import libraryRoutes from './server/routes/library.js';
 import settingsRoutes from './server/routes/settings.js';
 import devicesRoutes from './server/routes/devices.js';
-import { basicAuth } from './server/middleware/auth.js';
 
 async function startServer() {
   // Initialize services
@@ -26,8 +25,7 @@ async function startServer() {
   app.use(cors());
   app.use(express.json());
 
-  // API Routes (Authenticated)
-  app.use('/api', basicAuth);
+  // API Routes
   
   app.get('/api/health', (req, res) => {
     res.json({ status: 'ok' });

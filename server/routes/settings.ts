@@ -1,14 +1,27 @@
 import express from 'express';
 import db from '../db.js';
 import { encrypt } from '../services/encryptionService.js';
+import { CalDavService } from '../services/caldavService.js';
 import { v4 as uuidv4 } from 'uuid';
 
 const router = express.Router();
+const caldavService = new CalDavService();
 
 // List Accounts (redact password)
 router.get('/', (req, res) => {
   const accounts = db.prepare('SELECT id, name, url, username, calendar_id, created_at FROM caldav_accounts').all();
   res.json(accounts);
+});
+
+// Discover Calendars
+router.post('/discover', async (req, res) => {
+  const { url, username, password } = req.body;
+  try {
+    const calendars = await caldavService.discoverCalendars({ url, username, password });
+    res.json(calendars);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // Create Account

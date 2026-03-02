@@ -15,14 +15,15 @@ router.get('/', (req, res) => {
 
 // Create Document
 router.post('/', (req, res) => {
-  const { title, type, remote_path, sync_enabled, sync_schedule, caldav_account_id, device_id } = req.body;
+  const { title, type, remote_path, sync_enabled, sync_schedule, caldav_account_id, caldav_account_ids, device_id, timezone } = req.body;
   const id = uuidv4();
   
   try {
+    const accountIdsStr = caldav_account_ids ? JSON.stringify(caldav_account_ids) : null;
     db.prepare(`
-      INSERT INTO documents (id, title, type, remote_path, sync_enabled, sync_schedule, caldav_account_id, device_id)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(id, title, type || 'pdf', remote_path, sync_enabled ? 1 : 0, sync_schedule, caldav_account_id, device_id);
+      INSERT INTO documents (id, title, type, remote_path, sync_enabled, sync_schedule, caldav_account_id, caldav_account_ids, device_id, timezone)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(id, title, type || 'pdf', remote_path, sync_enabled ? 1 : 0, sync_schedule, caldav_account_id, accountIdsStr, device_id, timezone || 'UTC');
     
     if (sync_enabled && sync_schedule) {
       schedulerService.scheduleJob(id, sync_schedule);
@@ -37,14 +38,15 @@ router.post('/', (req, res) => {
 // Update Document
 router.put('/:id', (req, res) => {
   const { id } = req.params;
-  const { title, remote_path, sync_enabled, sync_schedule, caldav_account_id, device_id } = req.body;
+  const { title, remote_path, sync_enabled, sync_schedule, caldav_account_id, caldav_account_ids, device_id, timezone } = req.body;
   
   try {
+    const accountIdsStr = caldav_account_ids ? JSON.stringify(caldav_account_ids) : null;
     db.prepare(`
       UPDATE documents 
-      SET title = ?, remote_path = ?, sync_enabled = ?, sync_schedule = ?, caldav_account_id = ?, device_id = ?, updated_at = CURRENT_TIMESTAMP
+      SET title = ?, remote_path = ?, sync_enabled = ?, sync_schedule = ?, caldav_account_id = ?, caldav_account_ids = ?, device_id = ?, timezone = ?, updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
-    `).run(title, remote_path, sync_enabled ? 1 : 0, sync_schedule, caldav_account_id, device_id, id);
+    `).run(title, remote_path, sync_enabled ? 1 : 0, sync_schedule, caldav_account_id, accountIdsStr, device_id, timezone || 'UTC', id);
     
     if (sync_enabled && sync_schedule) {
       schedulerService.scheduleJob(id, sync_schedule);

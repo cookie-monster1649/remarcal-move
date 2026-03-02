@@ -39,8 +39,7 @@ export function initDb() {
       name TEXT NOT NULL,
       host TEXT NOT NULL,
       username TEXT NOT NULL,
-      encrypted_password TEXT, -- Optional if using key
-      private_key_path TEXT,   -- Optional if using password
+      encrypted_password TEXT NOT NULL,
       port INTEGER DEFAULT 22,
       last_connected_at TEXT,
       created_at TEXT DEFAULT CURRENT_TIMESTAMP
