@@ -86,6 +86,9 @@ export function initDb() {
     console.log('Migrating documents: adding timezone column');
     db.exec("ALTER TABLE documents ADD COLUMN timezone TEXT DEFAULT 'UTC'");
   }
+
+  // Cleanup: Reset stuck syncing status
+  db.prepare("UPDATE documents SET sync_status = 'idle' WHERE sync_status = 'syncing'").run();
   
   console.log('Database initialized at', DB_PATH);
 }

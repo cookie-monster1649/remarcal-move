@@ -173,7 +173,15 @@ export class SSHService {
                 }
 
                 // 3. Handle Metadata and Content if xochitl
+                let isFirstSync = false;
                 if (isXochitl) {
+                    const metaRemotePath = path.join(dirName, `${baseName}.metadata`);
+                    isFirstSync = await new Promise<boolean>((res) => {
+                        sftp.stat(metaRemotePath, (err) => {
+                            res(!!err); // If error (e.g. 404), it's the first sync
+                        });
+                    });
+
                     const now = Date.now().toString();
                     const metadata = {
                         deleted: false,
@@ -204,7 +212,7 @@ export class SSHService {
                     fs.writeFileSync(metaLocal, JSON.stringify(metadata));
                     fs.writeFileSync(contentLocal, JSON.stringify(content));
 
-                    await uploadFile(metaLocal, path.join(dirName, `${baseName}.metadata`));
+                    await uploadFile(metaLocal, metaRemotePath);
                     await uploadFile(contentLocal, path.join(dirName, `${baseName}.content`));
                 }
 
@@ -230,8 +238,8 @@ export class SSHService {
                     });
                 });
 
-                // 5. Restart xochitl to refresh UI
-                if (isXochitl) {
+                // 5. Restart xochitl to refresh UI (only on first sync)
+                if (isXochitl && isFirstSync) {
                     await new Promise<void>((res) => {
                         conn.exec('systemctl restart xochitl', (err, stream) => {
                             if (err) console.warn('Failed to restart xochitl:', err);
