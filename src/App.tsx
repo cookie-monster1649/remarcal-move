@@ -13,6 +13,7 @@ interface Document {
   last_synced_at: string;
   sync_status: 'idle' | 'syncing' | 'error';
   last_error: string;
+  year: number;
   caldav_account_id: string;
   device_id: string;
 }
@@ -22,7 +23,7 @@ interface Account {
   name: string;
   url: string;
   username: string;
-  calendar_id: string;
+  selected_calendars: string; // JSON string
 }
 
 interface Device {
@@ -55,6 +56,7 @@ export default function App() {
     remote_path: '/home/root/.local/share/remarkable/xochitl/calendar.pdf',
     sync_enabled: false,
     sync_schedule: '0 0 * * *', // Daily at midnight
+    year: new Date().getFullYear(),
     caldav_account_id: '',
     device_id: ''
   });
@@ -66,7 +68,7 @@ export default function App() {
     url: '',
     username: '',
     password: '',
-    calendar_id: ''
+    selected_calendars: [] as {url: string, name: string}[]
   });
 
   const [showDeviceForm, setShowDeviceForm] = useState(false);
@@ -174,7 +176,7 @@ export default function App() {
       }
       setShowAccountForm(false);
       setEditingAccount(null);
-      setAccountForm({ name: '', url: '', username: '', password: '', calendar_id: '' });
+      setAccountForm({ name: '', url: '', username: '', password: '', selected_calendars: [] });
       setDiscoveredCalendars([]);
       fetchData();
     } catch (err: any) {
@@ -344,6 +346,7 @@ export default function App() {
                         remote_path: '/home/root/.local/share/remarkable/xochitl/calendar.pdf',
                         sync_enabled: false,
                         sync_schedule: '0 0 * * *',
+                        year: new Date().getFullYear(),
                         caldav_account_id: accounts.length > 0 ? accounts[0].id : '',
                         device_id: devices.length > 0 ? devices[0].id : ''
                     });
@@ -402,6 +405,7 @@ export default function App() {
                                             remote_path: doc.remote_path,
                                             sync_enabled: !!doc.sync_enabled,
                                             sync_schedule: doc.sync_schedule,
+                                            year: doc.year || new Date().getFullYear(),
                                             caldav_account_id: doc.caldav_account_id,
                                             device_id: doc.device_id
                                         });
@@ -489,7 +493,7 @@ export default function App() {
               <button 
                 onClick={() => {
                     setEditingAccount(null);
-                    setAccountForm({ name: '', url: '', username: '', password: '', calendar_id: '' });
+                    setAccountForm({ name: '', url: '', username: '', password: '', selected_calendars: [] });
                     setShowAccountForm(true);
                 }}
                 className="flex items-center px-4 py-2 bg-stone-900 text-white rounded-lg hover:bg-stone-800"
@@ -500,33 +504,42 @@ export default function App() {
             </div>
 
             <div className="grid gap-4">
-                {accounts.map(acc => (
-                    <div key={acc.id} className="bg-white p-6 rounded-2xl border border-stone-200 shadow-sm flex justify-between items-center">
-                        <div>
-                            <h3 className="font-bold">{acc.name}</h3>
-                            <p className="text-sm text-stone-500">{acc.url}</p>
-                            <p className="text-xs text-stone-400">{acc.username}</p>
+                {accounts.map(acc => {
+                    const selected = JSON.parse(acc.selected_calendars || '[]');
+                    return (
+                        <div key={acc.id} className="bg-white p-6 rounded-2xl border border-stone-200 shadow-sm flex justify-between items-center">
+                            <div>
+                                <h3 className="font-bold">{acc.name}</h3>
+                                <p className="text-sm text-stone-500">{acc.url}</p>
+                                <p className="text-xs text-stone-400">{acc.username} • {selected.length} calendars selected</p>
+                            </div>
+                            <div className="flex gap-2">
+                                <button 
+                                    onClick={() => {
+                                        setEditingAccount(acc);
+                                        setAccountForm({ 
+                                            name: acc.name,
+                                            url: acc.url,
+                                            username: acc.username,
+                                            password: '',
+                                            selected_calendars: selected
+                                        });
+                                        setShowAccountForm(true);
+                                    }}
+                                    className="p-2 text-stone-500 hover:text-stone-900 hover:bg-stone-100 rounded-lg"
+                                >
+                                    <Settings size={20} />
+                                </button>
+                                <button 
+                                    onClick={() => deleteAccount(acc.id)}
+                                    className="p-2 text-stone-500 hover:text-red-600 hover:bg-red-50 rounded-lg"
+                                >
+                                    <Trash2 size={20} />
+                                </button>
+                            </div>
                         </div>
-                        <div className="flex gap-2">
-                            <button 
-                                onClick={() => {
-                                    setEditingAccount(acc);
-                                    setAccountForm({ ...acc, password: '' }); // Don't show password
-                                    setShowAccountForm(true);
-                                }}
-                                className="p-2 text-stone-500 hover:text-stone-900 hover:bg-stone-100 rounded-lg"
-                            >
-                                <Settings size={20} />
-                            </button>
-                            <button 
-                                onClick={() => deleteAccount(acc.id)}
-                                className="p-2 text-stone-500 hover:text-red-600 hover:bg-red-50 rounded-lg"
-                            >
-                                <Trash2 size={20} />
-                            </button>
-                        </div>
-                    </div>
-                ))}
+                    );
+                })}
             </div>
           </div>
         )}
@@ -552,6 +565,16 @@ export default function App() {
                             className="w-full px-3 py-2 border rounded-lg"
                             value={docForm.title}
                             onChange={e => setDocForm({...docForm, title: e.target.value})}
+                        />
+                    </div>
+                    <div>
+                        <label className="block text-sm font-medium mb-1">Year</label>
+                        <input 
+                            type="number" 
+                            required
+                            className="w-full px-3 py-2 border rounded-lg"
+                            value={docForm.year}
+                            onChange={e => setDocForm({...docForm, year: parseInt(e.target.value)})}
                         />
                     </div>
                     <div>
@@ -795,16 +818,57 @@ export default function App() {
                         <div className="bg-stone-50 p-3 rounded-lg border border-stone-200">
                             <label className="block text-xs font-bold text-stone-500 uppercase mb-2">Discovered Calendars</label>
                             <div className="space-y-1 max-h-40 overflow-y-auto">
-                                {discoveredCalendars.map(cal => (
-                                    <button
-                                        key={cal.url}
-                                        type="button"
-                                        onClick={() => setAccountForm({ ...accountForm, url: cal.url, name: cal.name })}
-                                        className="w-full text-left px-2 py-1.5 text-sm hover:bg-white rounded border border-transparent hover:border-stone-200 flex justify-between items-center group"
-                                    >
+                                {discoveredCalendars.map(cal => {
+                                    const isSelected = accountForm.selected_calendars.some(c => c.url === cal.url);
+                                    return (
+                                        <div
+                                            key={cal.url}
+                                            className="flex items-center gap-2 px-2 py-1.5 text-sm hover:bg-white rounded border border-transparent hover:border-stone-200 group"
+                                        >
+                                            <input 
+                                                type="checkbox"
+                                                checked={isSelected}
+                                                onChange={(e) => {
+                                                    if (e.target.checked) {
+                                                        setAccountForm({
+                                                            ...accountForm,
+                                                            selected_calendars: [...accountForm.selected_calendars, cal]
+                                                        });
+                                                    } else {
+                                                        setAccountForm({
+                                                            ...accountForm,
+                                                            selected_calendars: accountForm.selected_calendars.filter(c => c.url !== cal.url)
+                                                        });
+                                                    }
+                                                }}
+                                                className="rounded"
+                                            />
+                                            <span className="truncate flex-1">{cal.name}</span>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        </div>
+                    )}
+
+                    {accountForm.selected_calendars.length > 0 && discoveredCalendars.length === 0 && (
+                        <div className="bg-stone-50 p-3 rounded-lg border border-stone-200">
+                            <label className="block text-xs font-bold text-stone-500 uppercase mb-2">Selected Calendars ({accountForm.selected_calendars.length})</label>
+                            <div className="space-y-1 max-h-40 overflow-y-auto">
+                                {accountForm.selected_calendars.map(cal => (
+                                    <div key={cal.url} className="flex items-center justify-between text-sm px-2 py-1">
                                         <span className="truncate">{cal.name}</span>
-                                        <span className="text-[10px] text-stone-400 opacity-0 group-hover:opacity-100">Select</span>
-                                    </button>
+                                        <button 
+                                            type="button"
+                                            onClick={() => setAccountForm({
+                                                ...accountForm,
+                                                selected_calendars: accountForm.selected_calendars.filter(c => c.url !== cal.url)
+                                            })}
+                                            className="text-stone-400 hover:text-red-500"
+                                        >
+                                            <Trash2 size={12} />
+                                        </button>
+                                    </div>
                                 ))}
                             </div>
                         </div>

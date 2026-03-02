@@ -30,7 +30,7 @@ export function initDb() {
       url TEXT NOT NULL,
       username TEXT NOT NULL,
       encrypted_password TEXT NOT NULL,
-      calendar_id TEXT,
+      selected_calendars TEXT, -- JSON array of {url, name}
       created_at TEXT DEFAULT CURRENT_TIMESTAMP
     );
 
@@ -55,6 +55,7 @@ export function initDb() {
       last_synced_at TEXT,
       sync_status TEXT DEFAULT 'idle', -- idle, checking, syncing, error
       last_error TEXT,
+      year INTEGER DEFAULT 2025,
       caldav_account_id TEXT,
       device_id TEXT, -- Link to device
       created_at TEXT DEFAULT CURRENT_TIMESTAMP,

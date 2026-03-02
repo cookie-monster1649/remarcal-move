@@ -26,32 +26,41 @@ export class SyncService {
     try {
       // 2. Fetch Events
       const password = decrypt(account.encrypted_password);
-      const year = new Date().getFullYear(); // Or configured year? User requirement says "Year" input replaced Start/End.
-      // But where is the year stored?
-      // The prompt says "Year input replaced Start/End".
-      // I should probably store the year in the document settings or assume current year/next year.
-      // For now, let's assume current year or store it in document config.
-      // I didn't add 'year' to documents table. I should have.
-      // Let's assume current year for now, or add it to DB.
-      // Given "Simplfy it aggressively", maybe just current year is fine.
-      // Or maybe the user wants to configure it.
-      // The previous App.tsx had `state.config.year`.
-      // I'll use the current year for simplicity, or 2025/2026 as per context.
-      // Let's use current year.
+      const year = doc.year || new Date().getFullYear();
       
       const startDate = `${year}-01-01`;
       const endDate = `${year}-12-31`;
 
-      const events = await calDavService.fetchEvents({
-        url: account.url,
-        username: account.username,
-        password: password,
-        startDate,
-        endDate
-      });
+      let selectedCalendars = [];
+      try {
+        selectedCalendars = JSON.parse(account.selected_calendars || '[]');
+      } catch (e) {
+        console.warn('Failed to parse selected_calendars for account', account.id);
+      }
+
+      // If no calendars selected, use the account URL as fallback (legacy behavior)
+      const calendarUrls = selectedCalendars.length > 0 
+        ? selectedCalendars.map((c: any) => c.url) 
+        : [account.url];
+
+      const allEvents = [];
+      for (const url of calendarUrls) {
+        try {
+          const events = await calDavService.fetchEvents({
+            url,
+            username: account.username,
+            password: password,
+            startDate,
+            endDate
+          });
+          allEvents.push(...events);
+        } catch (err: any) {
+          console.warn(`Failed to fetch events for calendar ${url}:`, err.message);
+        }
+      }
 
       // 3. Generate PDF
-      const pdfBuffer = pdfService.generate(events, { year });
+      const pdfBuffer = pdfService.generate(allEvents, { year });
       
       // Save locally to /data/docs for persistence/cache
       const localPath = path.join(process.env.DATA_DIR || './data', 'docs', `${docId}.pdf`);

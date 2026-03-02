@@ -9,7 +9,7 @@ const caldavService = new CalDavService();
 
 // List Accounts (redact password)
 router.get('/', (req, res) => {
-  const accounts = db.prepare('SELECT id, name, url, username, calendar_id, created_at FROM caldav_accounts').all();
+  const accounts = db.prepare('SELECT id, name, url, username, selected_calendars, created_at FROM caldav_accounts').all();
   res.json(accounts);
 });
 
@@ -26,15 +26,15 @@ router.post('/discover', async (req, res) => {
 
 // Create Account
 router.post('/', (req, res) => {
-  const { name, url, username, password, calendar_id } = req.body;
+  const { name, url, username, password, selected_calendars } = req.body;
   const id = uuidv4();
   
   try {
     const encrypted_password = encrypt(password);
     db.prepare(`
-      INSERT INTO caldav_accounts (id, name, url, username, encrypted_password, calendar_id)
+      INSERT INTO caldav_accounts (id, name, url, username, encrypted_password, selected_calendars)
       VALUES (?, ?, ?, ?, ?, ?)
-    `).run(id, name, url, username, encrypted_password, calendar_id);
+    `).run(id, name, url, username, encrypted_password, JSON.stringify(selected_calendars || []));
     
     res.json({ id, message: 'Account created' });
   } catch (err: any) {
@@ -45,22 +45,22 @@ router.post('/', (req, res) => {
 // Update Account
 router.put('/:id', (req, res) => {
   const { id } = req.params;
-  const { name, url, username, password, calendar_id } = req.body;
+  const { name, url, username, password, selected_calendars } = req.body;
   
   try {
     if (password) {
       const encrypted_password = encrypt(password);
       db.prepare(`
         UPDATE caldav_accounts 
-        SET name = ?, url = ?, username = ?, encrypted_password = ?, calendar_id = ?
+        SET name = ?, url = ?, username = ?, encrypted_password = ?, selected_calendars = ?
         WHERE id = ?
-      `).run(name, url, username, encrypted_password, calendar_id, id);
+      `).run(name, url, username, encrypted_password, JSON.stringify(selected_calendars || []), id);
     } else {
       db.prepare(`
         UPDATE caldav_accounts 
-        SET name = ?, url = ?, username = ?, calendar_id = ?
+        SET name = ?, url = ?, username = ?, selected_calendars = ?
         WHERE id = ?
-      `).run(name, url, username, calendar_id, id);
+      `).run(name, url, username, JSON.stringify(selected_calendars || []), id);
     }
     
     res.json({ message: 'Account updated' });
