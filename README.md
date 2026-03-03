@@ -1,13 +1,18 @@
 # Remarcal
 
-A self-hosted, private tool to sync CalDAV calendars to reMarkable Paper Pro as PDF planners.
+A self-hosted, private tool to sync calendar data (CalDAV + ICS subscriptions) to reMarkable Paper Pro as PDF planners.
 
 ## Features
 
 - **Multi-document Library**: Manage multiple planner configurations.
 - **Sync when Connected**: Every 5 minutes, the app performs a lightweight device connectivity check and syncs linked documents when a device is reachable.
+- **Calendars Tab**:
+  - Add **CalDAV** sources.
+  - Add **ICS subscriptions** (URL-based calendar feeds) with configurable refresh cadence.
+  - Select both CalDAV and subscription sources per document and merge into a single generated calendar PDF.
 - **Secure**: 
   - CalDAV credentials encrypted at rest.
+  - ICS subscription URLs are treated as credentials and stored encrypted at rest.
   - Device credentials encrypted at rest.
 - **Dockerized**: Easy deployment with Docker Compose.
 - **Persistence**: All data stored in a single volume.
@@ -49,11 +54,15 @@ A self-hosted, private tool to sync CalDAV calendars to reMarkable Paper Pro as 
 
 ### Usage
 
-1. **Settings**: Go to the Settings tab and add a CalDAV account.
+1. **Calendars**:
+   - Add one or more **CalDAV** accounts.
+   - Optionally add **Subscription** feeds using `.ics`/iCal URLs and set update frequency.
+   - Note: subscription URLs often contain secret tokens and are handled as credentials.
 2. **Devices**: Add and verify your reMarkable SSH connection.
 3. **Library**: Go to the Library tab and add a Document.
    - **Remote Path**: The full path on the reMarkable where the PDF should be uploaded. 
      - Example: `/home/root/.local/share/remarkable/xochitl/calendar.pdf` (Note: This replaces the file directly. Ensure you have a backup or use a unique name).
+   - Select any combination of CalDAV accounts and Subscriptions for this document.
 4. **Devices**: Enable **Sync when connected** per device if you want automatic background sync.
 5. **Sync**: Manually sync anytime, or let automatic sync run whenever an enabled device is reachable.
 
@@ -78,7 +87,7 @@ docker run --rm -v remarcal_data:/data -v $(pwd):/backup ubuntu tar xvf /backup/
 ## Security
 
 - **APP_MASTER_KEY**: Used for AES-256-GCM encryption of sensitive fields in the DB.
-- **Credentials**: CalDAV and device passwords are encrypted before storing in SQLite.
+- **Credentials**: CalDAV credentials, subscription URLs, and device passwords are encrypted before storing in SQLite.
 - **Bind Address**: By default, the app binds to `127.0.0.1` to prevent accidental exposure. To expose to LAN, change the port mapping in `docker-compose.yml` to `0.0.0.0:3000:3000`.
 
 ## Troubleshooting

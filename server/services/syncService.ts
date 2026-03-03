@@ -3,9 +3,9 @@ import { CalDavService } from './caldavService.js';
 import { PDFService } from './pdfService.js';
 import { SSHService } from './sshService.js';
 import { decrypt } from './encryptionService.js';
+import { subscriptionService } from './subscriptionService.js';
 import * as fs from 'fs';
 import * as path from 'path';
-import { toDate, formatInTimeZone } from 'date-fns-tz';
 
 const calDavService = new CalDavService();
 const pdfService = new PDFService();
@@ -30,7 +30,15 @@ export class SyncService {
       if (legacyAccount) linkedAccounts.push(legacyAccount);
     }
 
-    if (linkedAccounts.length === 0) throw new Error('No CalDAV accounts configured for this document');
+    const linkedSubscriptions = db.prepare(`
+      SELECT s.* FROM calendar_subscriptions s
+      JOIN document_subscriptions ds ON s.id = ds.subscription_id
+      WHERE ds.document_id = ? AND s.enabled = 1
+    `).all(docId) as any[];
+
+    if (linkedAccounts.length === 0 && linkedSubscriptions.length === 0) {
+      throw new Error('No calendar sources configured for this document');
+    }
 
     // Update status to syncing
     db.prepare('UPDATE documents SET sync_status = ?, last_error = NULL WHERE id = ?').run('syncing', docId);
@@ -70,6 +78,32 @@ export class SyncService {
           } catch (err: any) {
             console.warn(`Failed to fetch events for account ${account.name} calendar ${url}:`, err.message);
           }
+        }
+      }
+
+      for (const subscription of linkedSubscriptions) {
+        try {
+          await subscriptionService.fetchSubscription(subscription.id);
+        } catch (err: any) {
+          console.warn(`Failed refreshing subscription ${subscription.id}: ${err.message}`);
+        }
+
+        const subEvents = db.prepare(`
+          SELECT summary, start_at, end_at, location, description, all_day, timezone
+          FROM subscription_events
+          WHERE subscription_id = ? AND end_at >= ? AND start_at <= ?
+        `).all(subscription.id, `${startDate}T00:00:00.000Z`, `${endDate}T23:59:59.999Z`) as any[];
+
+        for (const event of subEvents) {
+          allEvents.push({
+            summary: event.summary || 'Untitled Event',
+            start: new Date(event.start_at),
+            end: new Date(event.end_at),
+            location: event.location || undefined,
+            description: event.description || undefined,
+            allDay: !!event.all_day,
+            timezone: event.timezone || undefined,
+          });
         }
       }
 

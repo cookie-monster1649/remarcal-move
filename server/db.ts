@@ -73,6 +73,48 @@ export function initDb() {
       FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE,
       FOREIGN KEY (account_id) REFERENCES caldav_accounts(id) ON DELETE CASCADE
     );
+
+    CREATE TABLE IF NOT EXISTS calendar_subscriptions (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      encrypted_url TEXT NOT NULL,
+      update_frequency_minutes INTEGER DEFAULT 30,
+      enabled INTEGER DEFAULT 1,
+      last_fetched_at TEXT,
+      last_success_at TEXT,
+      last_error TEXT,
+      last_etag TEXT,
+      last_modified TEXT,
+      last_body_hash TEXT,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS document_subscriptions (
+      document_id TEXT,
+      subscription_id TEXT,
+      PRIMARY KEY (document_id, subscription_id),
+      FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE,
+      FOREIGN KEY (subscription_id) REFERENCES calendar_subscriptions(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS subscription_events (
+      subscription_id TEXT NOT NULL,
+      uid TEXT NOT NULL,
+      recurrence_id TEXT NOT NULL DEFAULT '',
+      summary TEXT,
+      start_at TEXT NOT NULL,
+      end_at TEXT NOT NULL,
+      location TEXT,
+      description TEXT,
+      all_day INTEGER DEFAULT 0,
+      timezone TEXT,
+      last_seen_at TEXT NOT NULL,
+      PRIMARY KEY (subscription_id, uid, recurrence_id),
+      FOREIGN KEY (subscription_id) REFERENCES calendar_subscriptions(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_subscription_events_subscription_start
+      ON subscription_events(subscription_id, start_at);
   `);
 
   // Migrations: Add columns if they don't exist
@@ -144,6 +186,19 @@ export function initDb() {
   if (!hasSyncWhenConnected) {
     console.log('Migrating devices: adding sync_when_connected column');
     db.exec('ALTER TABLE devices ADD COLUMN sync_when_connected INTEGER DEFAULT 0');
+  }
+
+  const docsSubTableInfo = db.prepare("PRAGMA table_info(document_subscriptions)").all() as any[];
+  if (docsSubTableInfo.length === 0) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS document_subscriptions (
+        document_id TEXT,
+        subscription_id TEXT,
+        PRIMARY KEY (document_id, subscription_id),
+        FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE,
+        FOREIGN KEY (subscription_id) REFERENCES calendar_subscriptions(id) ON DELETE CASCADE
+      )
+    `);
   }
 
   // Cleanup: Reset stuck syncing status

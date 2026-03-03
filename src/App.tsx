@@ -15,6 +15,7 @@ interface Document {
   timezone: string;
   caldav_account_id: string;
   caldav_account_ids: string[];
+  subscription_ids: string[];
   device_id: string;
 }
 
@@ -24,6 +25,16 @@ interface Account {
   url: string;
   username: string;
   selected_calendars: string; // JSON string
+}
+
+interface Subscription {
+  id: string;
+  name: string;
+  update_frequency_minutes: number;
+  enabled: number;
+  last_fetched_at?: string;
+  last_success_at?: string;
+  last_error?: string;
 }
 
 interface Device {
@@ -40,6 +51,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<'library' | 'settings' | 'devices'>('library');
   const [documents, setDocuments] = useState<Document[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
+  const [subscriptions, setSubscriptions] = useState<Subscription[]>([]);
   const [devices, setDevices] = useState<Device[]>([]);
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -58,6 +70,7 @@ export default function App() {
     year: new Date().getFullYear(),
     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
     caldav_account_ids: [] as string[],
+    subscription_ids: [] as string[],
     device_id: ''
   });
 
@@ -69,6 +82,15 @@ export default function App() {
     username: '',
     password: '',
     selected_calendars: [] as {url: string, name: string}[]
+  });
+
+  const [showSubscriptionForm, setShowSubscriptionForm] = useState(false);
+  const [editingSubscription, setEditingSubscription] = useState<Subscription | null>(null);
+  const [subscriptionForm, setSubscriptionForm] = useState({
+    name: '',
+    url: '',
+    update_frequency_minutes: 30,
+    enabled: true,
   });
 
   const [showDeviceForm, setShowDeviceForm] = useState(false);
@@ -85,19 +107,22 @@ export default function App() {
   const fetchData = async () => {
     setLoading(true);
     try {
-      const [docsRes, accountsRes, devicesRes] = await Promise.all([
+      const [docsRes, accountsRes, subsRes, devicesRes] = await Promise.all([
         axios.get('/api/library'),
         axios.get('/api/settings'),
+        axios.get('/api/settings/subscriptions'),
         axios.get('/api/devices')
       ]);
       
       // Defensive check: ensure data is an array
       const docsData = Array.isArray(docsRes.data) ? docsRes.data : (docsRes.data.documents || []);
       const accountsData = Array.isArray(accountsRes.data) ? accountsRes.data : [];
+      const subscriptionsData = Array.isArray(subsRes.data) ? subsRes.data : [];
       const devicesData = Array.isArray(devicesRes.data) ? devicesRes.data : [];
       
       setDocuments(docsData);
       setAccounts(accountsData);
+      setSubscriptions(subscriptionsData);
       setDevices(devicesData);
       setError(null);
     } catch (err: any) {
@@ -233,6 +258,27 @@ export default function App() {
     }
   };
 
+  const handleSubscriptionSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSubmitting(true);
+    setModalError(null);
+    try {
+      if (editingSubscription) {
+        await axios.put(`/api/settings/subscriptions/${editingSubscription.id}`, subscriptionForm);
+      } else {
+        await axios.post('/api/settings/subscriptions', subscriptionForm);
+      }
+      setShowSubscriptionForm(false);
+      setEditingSubscription(null);
+      setSubscriptionForm({ name: '', url: '', update_frequency_minutes: 30, enabled: true });
+      fetchData();
+    } catch (err: any) {
+      setModalError(err.response?.data?.error || err.message);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   const deleteDoc = async (id: string) => {
     if (!confirm('Are you sure?')) return;
     try {
@@ -257,6 +303,16 @@ export default function App() {
     if (!confirm('Are you sure?')) return;
     try {
       await axios.delete(`/api/devices/${id}`);
+      fetchData();
+    } catch (err: any) {
+      alert(err.message);
+    }
+  };
+
+  const deleteSubscription = async (id: string) => {
+    if (!confirm('Are you sure?')) return;
+    try {
+      await axios.delete(`/api/settings/subscriptions/${id}`);
       fetchData();
     } catch (err: any) {
       alert(err.message);
@@ -321,7 +377,7 @@ export default function App() {
               onClick={() => setActiveTab('settings')}
               className={`px-3 py-2 rounded-lg text-sm font-medium ${activeTab === 'settings' ? 'bg-stone-100 text-stone-900' : 'text-stone-500 hover:text-stone-900'}`}
             >
-              Settings
+              Calendars
             </button>
           </nav>
         </div>
@@ -348,6 +404,7 @@ export default function App() {
                         year: new Date().getFullYear(),
                         timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
                         caldav_account_ids: accounts.length > 0 ? [accounts[0].id] : [],
+                        subscription_ids: subscriptions.length > 0 ? [subscriptions[0].id] : [],
                         device_id: devices.length > 0 ? devices[0].id : ''
                     });
                     setShowDocForm(true);
@@ -406,6 +463,7 @@ export default function App() {
                                             year: doc.year || new Date().getFullYear(),
                                             timezone: doc.timezone || 'UTC',
                                             caldav_account_ids: doc.caldav_account_ids || (doc.caldav_account_id ? [doc.caldav_account_id] : []),
+                                            subscription_ids: doc.subscription_ids || [],
                                             device_id: doc.device_id
                                         });
                                         setShowDocForm(true);
@@ -496,19 +554,34 @@ export default function App() {
         {activeTab === 'settings' && (
           <div className="space-y-6">
             <div className="flex justify-between items-center">
-              <h2 className="text-2xl font-bold">CalDAV Accounts</h2>
-              <button 
-                onClick={() => {
-                    setEditingAccount(null);
-                    setAccountForm({ name: '', url: '', username: '', password: '', selected_calendars: [] });
-                    setShowAccountForm(true);
-                }}
-                className="flex items-center px-4 py-2 bg-stone-900 text-white rounded-lg hover:bg-stone-800"
-              >
-                <Plus size={18} className="mr-2" />
-                Add Account
-              </button>
+              <h2 className="text-2xl font-bold">Calendars</h2>
+              <div className="flex items-center gap-2">
+                <button 
+                  onClick={() => {
+                      setEditingAccount(null);
+                      setAccountForm({ name: '', url: '', username: '', password: '', selected_calendars: [] });
+                      setShowAccountForm(true);
+                  }}
+                  className="flex items-center px-4 py-2 bg-stone-900 text-white rounded-lg hover:bg-stone-800"
+                >
+                  <Plus size={18} className="mr-2" />
+                  Add CalDAV
+                </button>
+                <button
+                  onClick={() => {
+                    setEditingSubscription(null);
+                    setSubscriptionForm({ name: '', url: '', update_frequency_minutes: 30, enabled: true });
+                    setShowSubscriptionForm(true);
+                  }}
+                  className="flex items-center px-4 py-2 bg-stone-800 text-white rounded-lg hover:bg-stone-700"
+                >
+                  <Plus size={18} className="mr-2" />
+                  Add Subscription
+                </button>
+              </div>
             </div>
+
+            <h3 className="text-lg font-semibold text-stone-700">CalDAV</h3>
 
             <div className="grid gap-4">
                 {accounts.map(acc => {
@@ -547,6 +620,46 @@ export default function App() {
                         </div>
                     );
                 })}
+            </div>
+
+            <h3 className="text-lg font-semibold text-stone-700 pt-2">Subscriptions</h3>
+            <div className="grid gap-4">
+              {subscriptions.length === 0 ? (
+                <div className="bg-white p-6 rounded-2xl border border-stone-200 text-sm text-stone-500">
+                  No subscriptions yet.
+                </div>
+              ) : (
+                subscriptions.map(sub => (
+                  <div key={sub.id} className="bg-white p-6 rounded-2xl border border-stone-200 shadow-sm flex justify-between items-center">
+                    <div>
+                      <h3 className="font-bold">{sub.name}</h3>
+                      <p className="text-sm text-stone-500">Updates every {sub.update_frequency_minutes} minutes</p>
+                      <p className="text-xs text-stone-400">
+                        {sub.last_success_at ? `Last success: ${new Date(sub.last_success_at).toLocaleString()}` : 'Not fetched yet'}
+                      </p>
+                      {sub.last_error && <p className="text-xs text-red-600 mt-1">{sub.last_error}</p>}
+                    </div>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => {
+                          setEditingSubscription(sub);
+                          setSubscriptionForm({ name: sub.name, url: '', update_frequency_minutes: sub.update_frequency_minutes, enabled: !!sub.enabled });
+                          setShowSubscriptionForm(true);
+                        }}
+                        className="p-2 text-stone-500 hover:text-stone-900 hover:bg-stone-100 rounded-lg"
+                      >
+                        <Settings size={20} />
+                      </button>
+                      <button
+                        onClick={() => deleteSubscription(sub.id)}
+                        className="p-2 text-stone-500 hover:text-red-600 hover:bg-red-50 rounded-lg"
+                      >
+                        <Trash2 size={20} />
+                      </button>
+                    </div>
+                  </div>
+                ))
+              )}
             </div>
           </div>
         )}
@@ -639,6 +752,31 @@ export default function App() {
                                             }}
                                         />
                                         <span className="text-sm">{a.name}</span>
+                                    </label>
+                                ))
+                            )}
+                        </div>
+                    </div>
+                    <div>
+                        <label className="block text-sm font-medium mb-2">Subscriptions</label>
+                        <div className="space-y-2 max-h-40 overflow-y-auto p-3 border rounded-lg bg-stone-50">
+                            {subscriptions.length === 0 ? (
+                                <p className="text-xs text-stone-500 italic">No subscriptions configured.</p>
+                            ) : (
+                                subscriptions.map(s => (
+                                    <label key={s.id} className="flex items-center gap-2 cursor-pointer hover:bg-stone-100 p-1 rounded transition-colors">
+                                        <input
+                                            type="checkbox"
+                                            className="rounded border-stone-300 text-stone-900 focus:ring-stone-500"
+                                            checked={docForm.subscription_ids.includes(s.id)}
+                                            onChange={e => {
+                                                const ids = e.target.checked
+                                                    ? [...docForm.subscription_ids, s.id]
+                                                    : docForm.subscription_ids.filter(id => id !== s.id);
+                                                setDocForm({ ...docForm, subscription_ids: ids });
+                                            }}
+                                        />
+                                        <span className="text-sm">{s.name}</span>
                                     </label>
                                 ))
                             )}
@@ -914,6 +1052,84 @@ export default function App() {
                     </div>
                 </form>
             </div>
+        </div>
+      )}
+
+      {/* Subscription Modal */}
+      {showSubscriptionForm && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl p-8 max-w-md w-full shadow-xl">
+            <h3 className="text-xl font-bold mb-4">{editingSubscription ? 'Edit Subscription' : 'New Subscription'}</h3>
+            {modalError && (
+              <div className="mb-4 p-3 bg-red-50 text-red-700 rounded-lg text-sm flex items-center gap-2">
+                <XCircle size={16} />
+                {modalError}
+              </div>
+            )}
+            <form onSubmit={handleSubscriptionSubmit} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium mb-1">Name</label>
+                <input
+                  type="text"
+                  required
+                  className="w-full px-3 py-2 border rounded-lg"
+                  value={subscriptionForm.name}
+                  onChange={e => setSubscriptionForm({ ...subscriptionForm, name: e.target.value })}
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-1">URL (.ics / iCal)</label>
+                <input
+                  type="url"
+                  required={!editingSubscription}
+                  className="w-full px-3 py-2 border rounded-lg"
+                  placeholder={editingSubscription ? '(Unchanged unless replaced)' : 'https://example.com/calendar.ics'}
+                  value={subscriptionForm.url}
+                  onChange={e => setSubscriptionForm({ ...subscriptionForm, url: e.target.value })}
+                />
+                <p className="text-xs text-stone-500 mt-1">Secret subscription URLs are treated as credentials and stored encrypted.</p>
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-1">Update frequency (minutes)</label>
+                <input
+                  type="number"
+                  min={15}
+                  max={1440}
+                  required
+                  className="w-full px-3 py-2 border rounded-lg"
+                  value={subscriptionForm.update_frequency_minutes}
+                  onChange={e => setSubscriptionForm({ ...subscriptionForm, update_frequency_minutes: parseInt(e.target.value || '30') })}
+                />
+              </div>
+              <div className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  id="subscription_enabled"
+                  checked={subscriptionForm.enabled}
+                  onChange={e => setSubscriptionForm({ ...subscriptionForm, enabled: e.target.checked })}
+                />
+                <label htmlFor="subscription_enabled" className="text-sm font-medium">Enabled</label>
+              </div>
+
+              <div className="flex justify-end gap-2 mt-6">
+                <button
+                  type="button"
+                  onClick={() => setShowSubscriptionForm(false)}
+                  className="px-4 py-2 text-stone-600 hover:bg-stone-100 rounded-lg"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={submitting}
+                  className="px-4 py-2 bg-stone-900 text-white rounded-lg hover:bg-stone-800 disabled:opacity-50 flex items-center gap-2"
+                >
+                  {submitting && <RefreshCw size={16} className="animate-spin" />}
+                  Save
+                </button>
+              </div>
+            </form>
+          </div>
         </div>
       )}
     </div>

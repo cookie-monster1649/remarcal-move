@@ -19,12 +19,14 @@ const syncService = new SyncService();
 router.get('/', (req, res) => {
   const docs = db.prepare('SELECT * FROM documents ORDER BY updated_at DESC').all() as any[];
   
-  // For each document, fetch its linked accounts
+  // For each document, fetch its linked accounts and subscriptions
   const docsWithAccounts = docs.map(doc => {
     const accounts = db.prepare('SELECT account_id FROM document_accounts WHERE document_id = ?').all(doc.id) as any[];
+    const subscriptions = db.prepare('SELECT subscription_id FROM document_subscriptions WHERE document_id = ?').all(doc.id) as any[];
     return {
       ...doc,
-      caldav_account_ids: accounts.map(a => a.account_id)
+      caldav_account_ids: accounts.map(a => a.account_id),
+      subscription_ids: subscriptions.map(s => s.subscription_id),
     };
   });
   
@@ -41,6 +43,7 @@ router.post('/', (req, res) => {
     const title = requireString(req.body.title, 'title');
     const remote_path = requireString(req.body.remote_path, 'remote_path');
     const caldav_account_ids = optionalStringArray(req.body.caldav_account_ids, 'caldav_account_ids') || [];
+    const subscription_ids = optionalStringArray(req.body.subscription_ids, 'subscription_ids') || [];
     const device_id = optionalString(req.body.device_id, 'device_id');
     const year = optionalInteger(req.body.year, 'year', 1970, 2100) || new Date().getFullYear();
     const timezone = optionalString(req.body.timezone, 'timezone') || 'UTC';
@@ -57,6 +60,13 @@ router.post('/', (req, res) => {
         const insertAccount = db.prepare('INSERT INTO document_accounts (document_id, account_id) VALUES (?, ?)');
         for (const accountId of caldav_account_ids) {
           insertAccount.run(id, accountId);
+        }
+      }
+
+      if (Array.isArray(subscription_ids)) {
+        const insertSubscription = db.prepare('INSERT INTO document_subscriptions (document_id, subscription_id) VALUES (?, ?)');
+        for (const subscriptionId of subscription_ids) {
+          insertSubscription.run(id, subscriptionId);
         }
       }
     });
@@ -82,6 +92,7 @@ router.put('/:id', (req, res) => {
     const title = requireString(req.body.title, 'title');
     const remote_path = requireString(req.body.remote_path, 'remote_path');
     const caldav_account_ids = optionalStringArray(req.body.caldav_account_ids, 'caldav_account_ids') || [];
+    const subscription_ids = optionalStringArray(req.body.subscription_ids, 'subscription_ids') || [];
     const device_id = optionalString(req.body.device_id, 'device_id');
     const year = optionalInteger(req.body.year, 'year', 1970, 2100) || new Date().getFullYear();
     const timezone = optionalString(req.body.timezone, 'timezone') || 'UTC';
@@ -99,6 +110,14 @@ router.put('/:id', (req, res) => {
         const insertAccount = db.prepare('INSERT INTO document_accounts (document_id, account_id) VALUES (?, ?)');
         for (const accountId of caldav_account_ids) {
           insertAccount.run(id, accountId);
+        }
+      }
+
+      db.prepare('DELETE FROM document_subscriptions WHERE document_id = ?').run(id);
+      if (Array.isArray(subscription_ids)) {
+        const insertSubscription = db.prepare('INSERT INTO document_subscriptions (document_id, subscription_id) VALUES (?, ?)');
+        for (const subscriptionId of subscription_ids) {
+          insertSubscription.run(id, subscriptionId);
         }
       }
     });
