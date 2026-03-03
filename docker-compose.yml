@@ -15,11 +15,11 @@ services:
       - /DATA/AppData/remarcal:/data
       - /tmp:/tmp
     environment:
-      - NODE_ENV=production
-      - PORT=3000
-      - DATA_DIR=/data
+      - NODE_ENV=${NODE_ENV:-production}
+      - PORT=${PORT:-3000}
+      - DATA_DIR=${DATA_DIR:-/data}
       - APP_ADMIN_PASSWORD=${APP_ADMIN_PASSWORD}
-      - APP_ALLOWED_ORIGIN=${APP_ALLOWED_ORIGIN:-http://nuc.tail0c48d8.ts.net:3000}
+      - APP_ALLOWED_ORIGIN=${APP_ALLOWED_ORIGIN}
       - APP_SECURE_COOKIES=${APP_SECURE_COOKIES:-false}
       - APP_MASTER_KEY=${APP_MASTER_KEY}
       - SYNC_DRY_RUN=${SYNC_DRY_RUN:-false}
@@ -30,7 +30,7 @@ services:
       timeout: 10s
       retries: 3
     extra_hosts:
-       - "synology-ds423.tail0c48d8.ts.net:10.10.220.254"
+       - "${CALDAV_HOSTNAME:-nas.local}:${CALDAV_HOST_IP:-192.168.1.10}"
 
 volumes:
   remarcal_data:

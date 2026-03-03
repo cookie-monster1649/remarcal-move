@@ -35,8 +35,8 @@ async function startServer() {
   }
 
   const app = express();
-  const PORT = 3000;
-  const allowedOrigin = process.env.APP_ALLOWED_ORIGIN || 'http://nuc.tail0c48d8.ts.net:3000';
+  const PORT = parseInt(process.env.PORT || '3000', 10);
+  const allowedOrigin = process.env.APP_ALLOWED_ORIGIN || `http://localhost:${PORT}`;
 
   app.use(cors({
     origin: (origin, callback) => {
