@@ -92,6 +92,8 @@ export default function App() {
     update_frequency_minutes: 30,
     enabled: true,
   });
+  const [accountTestStatus, setAccountTestStatus] = useState<Record<string, { state: 'idle' | 'running' | 'success' | 'error'; message?: string; count?: number; at?: string }>>({});
+  const [subscriptionFetchStatus, setSubscriptionFetchStatus] = useState<Record<string, { state: 'idle' | 'running' | 'success' | 'error'; message?: string; count?: number; at?: string }>>({});
 
   const [showDeviceForm, setShowDeviceForm] = useState(false);
   const [editingDevice, setEditingDevice] = useState<Device | null>(null);
@@ -316,6 +318,57 @@ export default function App() {
       fetchData();
     } catch (err: any) {
       alert(err.message);
+    }
+  };
+
+  const testAccount = async (id: string) => {
+    setAccountTestStatus(prev => ({ ...prev, [id]: { state: 'running' } }));
+    try {
+      const res = await axios.post(`/api/settings/${id}/test`);
+      setAccountTestStatus(prev => ({
+        ...prev,
+        [id]: {
+          state: 'success',
+          message: res.data?.message || 'Connection OK',
+          count: res.data?.eventsFetched,
+          at: new Date().toISOString(),
+        },
+      }));
+    } catch (err: any) {
+      setAccountTestStatus(prev => ({
+        ...prev,
+        [id]: {
+          state: 'error',
+          message: err.response?.data?.error || err.message,
+          at: new Date().toISOString(),
+        },
+      }));
+    }
+  };
+
+  const fetchSubscriptionNow = async (id: string) => {
+    setSubscriptionFetchStatus(prev => ({ ...prev, [id]: { state: 'running' } }));
+    try {
+      const res = await axios.post(`/api/settings/subscriptions/${id}/fetch`);
+      setSubscriptionFetchStatus(prev => ({
+        ...prev,
+        [id]: {
+          state: 'success',
+          message: res.data?.message || 'Fetched',
+          count: res.data?.eventsStored,
+          at: new Date().toISOString(),
+        },
+      }));
+      fetchData();
+    } catch (err: any) {
+      setSubscriptionFetchStatus(prev => ({
+        ...prev,
+        [id]: {
+          state: 'error',
+          message: err.response?.data?.error || err.message,
+          at: new Date().toISOString(),
+        },
+      }));
     }
   };
 
@@ -586,14 +639,26 @@ export default function App() {
             <div className="grid gap-4">
                 {accounts.map(acc => {
                     const selected = JSON.parse(acc.selected_calendars || '[]');
+                    const testStatus = accountTestStatus[acc.id];
                     return (
                         <div key={acc.id} className="bg-white p-6 rounded-2xl border border-stone-200 shadow-sm flex justify-between items-center">
                             <div>
                                 <h3 className="font-bold">{acc.name}</h3>
                                 <p className="text-sm text-stone-500">{acc.url}</p>
                                 <p className="text-xs text-stone-400">{acc.username} • {selected.length} calendars selected</p>
+                                {testStatus?.state === 'running' && <p className="text-xs text-blue-600 mt-1">Testing connection…</p>}
+                                {testStatus?.state === 'success' && (
+                                  <p className="text-xs text-green-600 mt-1">✓ {testStatus.message}{typeof testStatus.count === 'number' ? ` (${testStatus.count} events)` : ''}</p>
+                                )}
+                                {testStatus?.state === 'error' && <p className="text-xs text-red-600 mt-1">✕ {testStatus.message}</p>}
                             </div>
                             <div className="flex gap-2">
+                                <button 
+                                    onClick={() => testAccount(acc.id)}
+                                    className="px-3 py-2 text-xs text-stone-700 bg-stone-100 hover:bg-stone-200 rounded-lg"
+                                >
+                                    {testStatus?.state === 'running' ? 'Testing…' : 'Test'}
+                                </button>
                                 <button 
                                     onClick={() => {
                                         setEditingAccount(acc);
@@ -629,7 +694,9 @@ export default function App() {
                   No subscriptions yet.
                 </div>
               ) : (
-                subscriptions.map(sub => (
+                subscriptions.map(sub => {
+                  const syncStatus = subscriptionFetchStatus[sub.id];
+                  return (
                   <div key={sub.id} className="bg-white p-6 rounded-2xl border border-stone-200 shadow-sm flex justify-between items-center">
                     <div>
                       <h3 className="font-bold">{sub.name}</h3>
@@ -638,8 +705,19 @@ export default function App() {
                         {sub.last_success_at ? `Last success: ${new Date(sub.last_success_at).toLocaleString()}` : 'Not fetched yet'}
                       </p>
                       {sub.last_error && <p className="text-xs text-red-600 mt-1">{sub.last_error}</p>}
+                      {syncStatus?.state === 'running' && <p className="text-xs text-blue-600 mt-1">Fetching now…</p>}
+                      {syncStatus?.state === 'success' && (
+                        <p className="text-xs text-green-600 mt-1">✓ {syncStatus.message}{typeof syncStatus.count === 'number' ? ` (${syncStatus.count} stored)` : ''}</p>
+                      )}
+                      {syncStatus?.state === 'error' && <p className="text-xs text-red-600 mt-1">✕ {syncStatus.message}</p>}
                     </div>
                     <div className="flex gap-2">
+                      <button
+                        onClick={() => fetchSubscriptionNow(sub.id)}
+                        className="px-3 py-2 text-xs text-stone-700 bg-stone-100 hover:bg-stone-200 rounded-lg"
+                      >
+                        {syncStatus?.state === 'running' ? 'Fetching…' : 'Fetch now'}
+                      </button>
                       <button
                         onClick={() => {
                           setEditingSubscription(sub);
@@ -658,7 +736,7 @@ export default function App() {
                       </button>
                     </div>
                   </div>
-                ))
+                )})
               )}
             </div>
           </div>

@@ -2,6 +2,8 @@ import express from 'express';
 import db from '../db.js';
 import { encrypt } from '../services/encryptionService.js';
 import { CalDavService } from '../services/caldavService.js';
+import { decrypt } from '../services/encryptionService.js';
+import { subscriptionService } from '../services/subscriptionService.js';
 import { v4 as uuidv4 } from 'uuid';
 import {
   getErrorMessage,
@@ -16,6 +18,17 @@ import {
 
 const router = express.Router();
 const caldavService = new CalDavService();
+
+function todayRange() {
+  const now = new Date();
+  const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  const end = new Date(start);
+  end.setUTCDate(end.getUTCDate() + 7);
+  return {
+    startDate: start.toISOString().slice(0, 10),
+    endDate: end.toISOString().slice(0, 10),
+  };
+}
 
 // List Accounts (redact password)
 router.get('/', (req, res) => {
@@ -128,6 +141,45 @@ router.delete('/:id', (req, res) => {
   }
 });
 
+// Test existing CalDAV account connectivity/fetch
+router.post('/:id/test', async (req, res) => {
+  const { id } = req.params;
+  try {
+    const account = db.prepare('SELECT * FROM caldav_accounts WHERE id = ?').get(id) as any;
+    if (!account) {
+      return res.status(404).json({ error: 'Account not found' });
+    }
+
+    const selectedCalendars = (() => {
+      try {
+        const parsed = JSON.parse(account.selected_calendars || '[]');
+        return Array.isArray(parsed) ? parsed : [];
+      } catch {
+        return [];
+      }
+    })();
+
+    const targetUrl = selectedCalendars.length > 0 ? selectedCalendars[0].url : account.url;
+    const { startDate, endDate } = todayRange();
+    const result = await caldavService.fetchEvents({
+      url: targetUrl,
+      username: account.username,
+      password: decrypt(account.encrypted_password),
+      startDate,
+      endDate,
+    });
+
+    res.json({
+      status: 'ok',
+      message: 'CalDAV connection successful',
+      eventsFetched: result.events.length,
+    });
+  } catch (err: any) {
+    const error = getErrorMessage(err);
+    res.status(error.status === 500 ? 400 : error.status).json({ error: error.message });
+  }
+});
+
 // Create Subscription
 router.post('/subscriptions', (req, res) => {
   try {
@@ -200,6 +252,29 @@ router.delete('/subscriptions/:id', (req, res) => {
     res.json({ message: 'Subscription deleted' });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// Fetch/sync a single subscription immediately
+router.post('/subscriptions/:id/fetch', async (req, res) => {
+  const { id } = req.params;
+  try {
+    const sub = db.prepare('SELECT id FROM calendar_subscriptions WHERE id = ?').get(id) as any;
+    if (!sub) {
+      return res.status(404).json({ error: 'Subscription not found' });
+    }
+
+    await subscriptionService.fetchSubscription(id);
+    const eventCount = (db.prepare('SELECT COUNT(*) as count FROM subscription_events WHERE subscription_id = ?').get(id) as any)?.count || 0;
+
+    res.json({
+      status: 'ok',
+      message: 'Subscription fetched successfully',
+      eventsStored: eventCount,
+    });
+  } catch (err: any) {
+    const error = getErrorMessage(err);
+    res.status(error.status === 500 ? 400 : error.status).json({ error: error.message });
   }
 });
 
