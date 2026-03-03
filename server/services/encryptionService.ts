@@ -1,5 +1,4 @@
 import crypto from 'crypto';
-import fs from 'fs';
 
 const ALGORITHM = 'aes-256-gcm';
 const IV_LENGTH = 16;
@@ -9,22 +8,12 @@ let MASTER_KEY: Buffer | null = null;
 let MASTER_SECRET: string | null = null;
 
 function loadMasterSecret(): string {
-  const keyFile = process.env.APP_MASTER_KEY_FILE;
-  if (keyFile && keyFile.trim() !== '') {
-    const raw = fs.readFileSync(keyFile, 'utf8').trim();
-    if (raw.length > 0) {
-      return raw;
-    }
-    throw new Error('APP_MASTER_KEY_FILE is set but empty.');
-  }
-
   const envKey = process.env.APP_MASTER_KEY;
   if (envKey && envKey.trim() !== '') {
-    console.warn('[security] APP_MASTER_KEY_FILE not set; using APP_MASTER_KEY environment variable fallback.');
     return envKey.trim();
   }
 
-  throw new Error('APP_MASTER_KEY is missing. Set APP_MASTER_KEY_FILE (preferred) or APP_MASTER_KEY.');
+  throw new Error('APP_MASTER_KEY is missing.');
 }
 
 function deriveRecordKey(secret: string, salt: Buffer): Buffer {

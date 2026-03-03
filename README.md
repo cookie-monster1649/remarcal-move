@@ -35,15 +35,13 @@ A self-hosted, private tool to sync calendar data (CalDAV + ICS subscriptions) t
    Create a `.env` file based on `.env.example`.
 
    ```bash
-   APP_MASTER_KEY_FILE=/run/secrets/app_master_key
-   APP_MASTER_KEY=optional_fallback_for_migration_only
+   APP_MASTER_KEY=your_long_random_master_key
    APP_ADMIN_PASSWORD=your_admin_ui_password
    APP_ALLOWED_ORIGIN=http://nuc.tail0c48d8.ts.net:3000
    ```
 
    **Important**:
-   - Prefer `APP_MASTER_KEY_FILE` (file-based secret). `APP_MASTER_KEY` is fallback only.
-   - Create `/DATA/AppData/remarcal/secrets/app_master_key` on host with strict permissions.
+   - `APP_MASTER_KEY` is required and must be at least 32 characters.
    - `APP_ADMIN_PASSWORD` is required; app refuses startup without it.
 
 4. **Run with Docker Compose**:
@@ -90,7 +88,7 @@ docker run --rm -v remarcal_data:/data -v $(pwd):/backup ubuntu tar xvf /backup/
 
 ## Security
 
-- **Master key source**: `APP_MASTER_KEY_FILE` (preferred), `APP_MASTER_KEY` fallback.
+- **Master key source**: `APP_MASTER_KEY` environment variable.
 - **Encryption**: sensitive DB fields use authenticated encryption with backward-compatible migration support.
 - **Credentials**: CalDAV credentials, subscription URLs, device passwords, and SSH private keys are encrypted before storing in SQLite.
 - **Auth**: all API routes except health/auth require session authentication.

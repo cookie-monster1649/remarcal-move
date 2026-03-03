@@ -737,11 +737,14 @@ export class PDFService {
         const endHour = 24; 
         const totalHours = endHour - startHour;
         const hourH = mainContentH / totalHours;
+        const isoWeekday = parseInt(getTzFormat(day, 'i')); // 1=Mon ... 7=Sun
+        const isWeekday = isoWeekday >= 1 && isoWeekday <= 5;
         
         for (let h = startHour; h <= endHour; h++) {
             const y = mainContentY + (h - startHour) * hourH;
-            doc.setLineWidth(0.1);
-            doc.setDrawColor(200); 
+            const emphasizeBusinessBoundary = isWeekday && (h === 9 || h === 17);
+            doc.setLineWidth(emphasizeBusinessBoundary ? 0.2 : 0.1);
+            doc.setDrawColor(emphasizeBusinessBoundary ? 0 : 200);
             doc.line(5, y, 5 + leftColW, y);
             
             if (h < endHour) {

@@ -13,14 +13,12 @@ services:
       - "3000:3000"
     volumes:
       - /DATA/AppData/remarcal:/data
-      - /DATA/AppData/remarcal/secrets:/run/secrets:ro
       - /tmp:/tmp
     environment:
       - NODE_ENV=production
       - PORT=3000
       - APP_ADMIN_PASSWORD=${APP_ADMIN_PASSWORD}
       - APP_ALLOWED_ORIGIN=${APP_ALLOWED_ORIGIN:-http://nuc.tail0c48d8.ts.net:3000}
-      - APP_MASTER_KEY_FILE=${APP_MASTER_KEY_FILE:-/run/secrets/app_master_key}
       - APP_MASTER_KEY=${APP_MASTER_KEY}
       - SYNC_DRY_RUN=${SYNC_DRY_RUN:-false}
       - SYNC_BACKUP_REMOTE=${SYNC_BACKUP_REMOTE:-true}
