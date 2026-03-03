@@ -12,7 +12,7 @@ services:
     ports:
       - "3000:3000"
     volumes:
-      - /DATA/AppData/remarcal:/data
+      - /DATA/AppData/remarcal/data:/data
       - /tmp:/tmp
     environment:
       - NODE_ENV=production
