@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { Calendar, Settings, Upload, Plus, Trash2, RefreshCw, FileText, CheckCircle, XCircle, Clock, Tablet, Wifi, WifiOff, Download } from 'lucide-react';
+import { Calendar, Settings, Plus, Trash2, RefreshCw, CheckCircle, XCircle, Clock, Tablet, Wifi, WifiOff, Download, LogOut, Shield } from 'lucide-react';
 import axios from 'axios';
+
+axios.defaults.withCredentials = true;
 
 // Types
 interface Document {
@@ -60,6 +62,11 @@ export default function App() {
   const [discoveredCalendars, setDiscoveredCalendars] = useState<{url: string, name: string}[]>([]);
   const [discovering, setDiscovering] = useState(false);
   const [deviceStatus, setDeviceStatus] = useState<Record<string, 'connected' | 'disconnected' | 'checking'>>({});
+  const [authenticated, setAuthenticated] = useState<boolean>(false);
+  const [authChecked, setAuthChecked] = useState<boolean>(false);
+  const [authPassword, setAuthPassword] = useState('');
+  const [authSubmitting, setAuthSubmitting] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
 
   // Forms state
   const [showDocForm, setShowDocForm] = useState(false);
@@ -107,6 +114,7 @@ export default function App() {
   });
 
   const fetchData = async () => {
+    if (!authenticated) return;
     setLoading(true);
     try {
       const [docsRes, accountsRes, subsRes, devicesRes] = await Promise.all([
@@ -130,12 +138,48 @@ export default function App() {
     } catch (err: any) {
       setError(err.response?.data?.error || err.message);
       if (err.response?.status === 401) {
-          // Browser handles basic auth prompt usually, but if not:
-          // window.location.reload();
+          setAuthenticated(false);
       }
     } finally {
       setLoading(false);
     }
+  };
+
+  const checkAuth = async () => {
+    try {
+      await axios.get('/api/auth/me');
+      setAuthenticated(true);
+      setAuthError(null);
+    } catch {
+      setAuthenticated(false);
+    } finally {
+      setAuthChecked(true);
+    }
+  };
+
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAuthSubmitting(true);
+    setAuthError(null);
+    try {
+      await axios.post('/api/auth/login', { password: authPassword });
+      setAuthenticated(true);
+      setAuthPassword('');
+      await fetchData();
+    } catch (err: any) {
+      setAuthError(err.response?.data?.error || 'Authentication failed');
+    } finally {
+      setAuthSubmitting(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    try {
+      await axios.post('/api/auth/logout');
+    } catch {
+      // ignore
+    }
+    setAuthenticated(false);
   };
 
   // Check connection for all devices
@@ -159,18 +203,24 @@ export default function App() {
   };
 
   useEffect(() => {
-    fetchData();
-    const interval = setInterval(fetchData, 10000); // Poll every 10s
-    return () => clearInterval(interval);
+    checkAuth();
   }, []);
 
   useEffect(() => {
+    if (!authenticated) return;
+    fetchData();
+    const interval = setInterval(fetchData, 10000); // Poll every 10s
+    return () => clearInterval(interval);
+  }, [authenticated]);
+
+  useEffect(() => {
+    if (!authenticated) return;
     if (devices.length > 0) {
         checkConnections();
         const interval = setInterval(checkConnections, 30000); // Check every 30s
         return () => clearInterval(interval);
     }
-  }, [devices.length]); // Re-run when devices list changes
+  }, [authenticated, devices.length]); // Re-run when devices list changes
 
   const handleDocSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -406,6 +456,33 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-stone-100 text-stone-900 font-sans">
+      {!authChecked ? (
+        <div className="min-h-screen flex items-center justify-center text-stone-600">Checking session…</div>
+      ) : !authenticated ? (
+        <div className="min-h-screen flex items-center justify-center p-4">
+          <form onSubmit={handleLogin} className="bg-white border border-stone-200 rounded-2xl shadow-sm p-8 w-full max-w-sm space-y-4">
+            <div className="flex items-center gap-2">
+              <Shield size={18} />
+              <h1 className="text-lg font-semibold">Remarcal Login</h1>
+            </div>
+            {authError && <div className="text-sm text-red-600 bg-red-50 border border-red-100 rounded p-2">{authError}</div>}
+            <div>
+              <label className="block text-sm font-medium mb-1">Admin password</label>
+              <input
+                type="password"
+                className="w-full px-3 py-2 border rounded-lg"
+                value={authPassword}
+                onChange={(e) => setAuthPassword(e.target.value)}
+                required
+              />
+            </div>
+            <button type="submit" disabled={authSubmitting} className="w-full px-4 py-2 bg-stone-900 text-white rounded-lg hover:bg-stone-800 disabled:opacity-50">
+              {authSubmitting ? 'Signing in…' : 'Sign in'}
+            </button>
+          </form>
+        </div>
+      ) : (
+      <>
       <header className="bg-white border-b border-stone-200 p-4 sticky top-0 z-10">
         <div className="max-w-5xl mx-auto flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -454,6 +531,14 @@ export default function App() {
               className={`px-3 py-2 rounded-lg text-sm font-medium ${activeTab === 'settings' ? 'bg-stone-100 text-stone-900' : 'text-stone-500 hover:text-stone-900'}`}
             >
               Calendars
+            </button>
+            <button
+              onClick={handleLogout}
+              className="px-3 py-2 rounded-lg text-sm font-medium text-stone-500 hover:text-stone-900 flex items-center gap-1"
+              title="Logout"
+            >
+              <LogOut size={14} />
+              Logout
             </button>
           </nav>
         </div>
@@ -1239,6 +1324,8 @@ export default function App() {
             </form>
           </div>
         </div>
+      )}
+      </>
       )}
     </div>
   );

@@ -28,6 +28,9 @@ export interface CalendarInfo {
 }
 
 export class CalDavService {
+  private readonly timeoutMs = 30000;
+  private readonly maxPayloadBytes = 10 * 1024 * 1024;
+
   async discoverCalendars(config: Partial<CalDavConfig> & { accountId?: string }): Promise<CalendarInfo[]> {
     let { url, username, password, accountId } = config;
     if (!url) throw new Error('URL is required for discovery');
@@ -66,6 +69,9 @@ export class CalDavService {
       const response = await axios({
         method: 'PROPFIND',
         url: url,
+        timeout: this.timeoutMs,
+        maxContentLength: this.maxPayloadBytes,
+        maxBodyLength: this.maxPayloadBytes,
         headers: {
           'Content-Type': 'application/xml; charset=utf-8',
           'Depth': '1',
@@ -178,6 +184,9 @@ export class CalDavService {
         method: 'REPORT',
         url: url,
         auth: username && password ? { username, password } : undefined,
+        timeout: this.timeoutMs,
+        maxContentLength: this.maxPayloadBytes,
+        maxBodyLength: this.maxPayloadBytes,
         headers: {
           'Content-Type': 'application/xml; charset=utf-8',
           'Depth': '1'

@@ -11,9 +11,11 @@ A self-hosted, private tool to sync calendar data (CalDAV + ICS subscriptions) t
   - Add **ICS subscriptions** (URL-based calendar feeds) with configurable refresh cadence.
   - Select both CalDAV and subscription sources per document and merge into a single generated calendar PDF.
 - **Secure**: 
+  - Session-based UI/API authentication (single-user admin password).
+  - SSH host key pinning (TOFU on first enrollment) and optional key-based device auth enrollment.
   - CalDAV credentials encrypted at rest.
   - ICS subscription URLs are treated as credentials and stored encrypted at rest.
-  - Device credentials encrypted at rest.
+  - Device credentials/keys encrypted at rest.
 - **Dockerized**: Easy deployment with Docker Compose.
 - **Persistence**: All data stored in a single volume.
 
@@ -29,20 +31,20 @@ A self-hosted, private tool to sync calendar data (CalDAV + ICS subscriptions) t
 
 1. **Clone the repository** (or download files).
 
-2. **Configure SSH Access**:
-   Set `REMARKABLE_PASSWORD` in your `.env` file (used as a default/fallback when no device is configured in-app).
-
-3. **Configure Environment**:
+2. **Configure Environment**:
    Create a `.env` file based on `.env.example`.
 
    ```bash
-   APP_MASTER_KEY=your_very_long_random_hex_string_at_least_32_bytes
-   REMARKABLE_HOST=10.11.99.1
-   REMARKABLE_USER=root
-   REMARKABLE_PASSWORD=your_password
+   APP_MASTER_KEY_FILE=/run/secrets/app_master_key
+   APP_MASTER_KEY=optional_fallback_for_migration_only
+   APP_ADMIN_PASSWORD=your_admin_ui_password
+   APP_ALLOWED_ORIGIN=http://nuc.tail0c48d8.ts.net:3000
    ```
 
-   **Important**: `APP_MASTER_KEY` is used to encrypt your CalDAV passwords. Keep it safe.
+   **Important**:
+   - Prefer `APP_MASTER_KEY_FILE` (file-based secret). `APP_MASTER_KEY` is fallback only.
+   - Create `/DATA/AppData/remarcal/secrets/app_master_key` on host with strict permissions.
+   - `APP_ADMIN_PASSWORD` is required; app refuses startup without it.
 
 4. **Run with Docker Compose**:
 
@@ -58,13 +60,15 @@ A self-hosted, private tool to sync calendar data (CalDAV + ICS subscriptions) t
    - Add one or more **CalDAV** accounts.
    - Optionally add **Subscription** feeds using `.ics`/iCal URLs and set update frequency.
    - Note: subscription URLs often contain secret tokens and are handled as credentials.
-2. **Devices**: Add and verify your reMarkable SSH connection.
-3. **Library**: Go to the Library tab and add a Document.
+2. **Login** with your admin password.
+3. **Devices**: Add and verify your reMarkable SSH connection.
+   - Optionally run key enrollment to switch device auth mode to SSH key.
+4. **Library**: Go to the Library tab and add a Document.
    - **Remote Path**: The full path on the reMarkable where the PDF should be uploaded. 
      - Example: `/home/root/.local/share/remarkable/xochitl/calendar.pdf` (Note: This replaces the file directly. Ensure you have a backup or use a unique name).
    - Select any combination of CalDAV accounts and Subscriptions for this document.
-4. **Devices**: Enable **Sync when connected** per device if you want automatic background sync.
-5. **Sync**: Manually sync anytime, or let automatic sync run whenever an enabled device is reachable.
+5. **Devices**: Enable **Sync when connected** per device if you want automatic background sync.
+6. **Sync**: Manually sync anytime, or let automatic sync run whenever an enabled device is reachable.
 
 ## Persistence & Backup
 
@@ -86,9 +90,11 @@ docker run --rm -v remarcal_data:/data -v $(pwd):/backup ubuntu tar xvf /backup/
 
 ## Security
 
-- **APP_MASTER_KEY**: Used for AES-256-GCM encryption of sensitive fields in the DB.
-- **Credentials**: CalDAV credentials, subscription URLs, and device passwords are encrypted before storing in SQLite.
-- **Bind Address**: By default, the app binds to `127.0.0.1` to prevent accidental exposure. To expose to LAN, change the port mapping in `docker-compose.yml` to `0.0.0.0:3000:3000`.
+- **Master key source**: `APP_MASTER_KEY_FILE` (preferred), `APP_MASTER_KEY` fallback.
+- **Encryption**: sensitive DB fields use authenticated encryption with backward-compatible migration support.
+- **Credentials**: CalDAV credentials, subscription URLs, device passwords, and SSH private keys are encrypted before storing in SQLite.
+- **Auth**: all API routes except health/auth require session authentication.
+- **TLS safety**: app refuses startup if `NODE_TLS_REJECT_UNAUTHORIZED=0`.
 
 ## Troubleshooting
 

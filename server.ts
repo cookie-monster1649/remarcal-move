@@ -8,8 +8,21 @@ import { subscriptionPollerService } from './server/services/subscriptionPollerS
 import libraryRoutes from './server/routes/library.js';
 import settingsRoutes from './server/routes/settings.js';
 import devicesRoutes from './server/routes/devices.js';
+import authRoutes from './server/routes/auth.js';
+import { requireAuth } from './server/services/authService.js';
+import { createRateLimiter, requestTimeout } from './server/middleware/security.js';
 
 async function startServer() {
+  if (process.env.NODE_TLS_REJECT_UNAUTHORIZED === '0') {
+    console.error('Refusing to start: NODE_TLS_REJECT_UNAUTHORIZED=0 disables TLS certificate validation.');
+    process.exit(1);
+  }
+
+  if (!process.env.APP_ADMIN_PASSWORD || process.env.APP_ADMIN_PASSWORD.trim() === '') {
+    console.error('Refusing to start: APP_ADMIN_PASSWORD is required for UI/API authentication.');
+    process.exit(1);
+  }
+
   // Initialize services
   try {
     initEncryption();
@@ -23,15 +36,37 @@ async function startServer() {
 
   const app = express();
   const PORT = 3000;
+  const allowedOrigin = process.env.APP_ALLOWED_ORIGIN || 'http://nuc.tail0c48d8.ts.net:3000';
 
-  app.use(cors());
-  app.use(express.json());
+  app.use(cors({
+    origin: (origin, callback) => {
+      if (!origin) return callback(null, true);
+      if (origin === allowedOrigin || origin === `http://localhost:${PORT}`) {
+        return callback(null, true);
+      }
+      return callback(new Error('CORS blocked for origin'));
+    },
+    credentials: true,
+  }));
+  app.use(express.json({ limit: '256kb' }));
+  app.use(requestTimeout(60_000));
+  app.use(createRateLimiter({ windowMs: 60_000, max: 300 }));
+
+  app.use((req, res, next) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'DENY');
+    res.setHeader('Referrer-Policy', 'no-referrer');
+    next();
+  });
 
   // API Routes
   
   app.get('/api/health', (req, res) => {
     res.json({ status: 'ok' });
   });
+
+  app.use('/api/auth', authRoutes);
+  app.use('/api', requireAuth);
 
   app.use('/api/library', libraryRoutes);
   app.use('/api/settings', settingsRoutes);

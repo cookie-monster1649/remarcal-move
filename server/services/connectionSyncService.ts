@@ -5,6 +5,28 @@ import { SyncService } from './syncService.js';
 
 const POLL_INTERVAL_MS = 5 * 60 * 1000;
 
+function buildDeviceSshConfig(device: any) {
+  const decryptedPrivateKey = device.encrypted_private_key ? decrypt(device.encrypted_private_key) : undefined;
+  const decryptedPassword = device.encrypted_password ? decrypt(device.encrypted_password) : undefined;
+  const authMode = device.auth_mode || 'password';
+
+  return {
+    host: device.host,
+    username: device.username,
+    port: device.port,
+    hostKeyFingerprint: device.host_key_fingerprint || undefined,
+    trustOnFirstUse: !device.host_key_fingerprint,
+    privateKey: authMode === 'key' ? decryptedPrivateKey : undefined,
+    password:
+      authMode === 'password'
+        ? decryptedPassword
+        : device.allow_password_fallback
+          ? decryptedPassword
+          : undefined,
+    readyTimeout: 5000,
+  };
+}
+
 export class ConnectionSyncService {
   private timer: NodeJS.Timeout | null = null;
   private running = false;
@@ -70,13 +92,7 @@ export class ConnectionSyncService {
 
   private async isDeviceConnected(device: any): Promise<boolean> {
     try {
-      const service = new SSHService({
-        host: device.host,
-        username: device.username,
-        port: device.port,
-        password: device.encrypted_password ? decrypt(device.encrypted_password) : undefined,
-        readyTimeout: 5000,
-      });
+      const service = new SSHService(buildDeviceSshConfig(device));
       await service.testConnection();
       return true;
     } catch {

@@ -50,7 +50,9 @@ export class SubscriptionService {
     try {
       const response = await axios.get(url, {
         responseType: 'text',
-        timeout: 20000,
+        timeout: 30000,
+        maxContentLength: 10 * 1024 * 1024,
+        maxBodyLength: 10 * 1024 * 1024,
         headers,
         validateStatus: (status) => (status >= 200 && status < 300) || status === 304,
       });

@@ -41,7 +41,12 @@ export function initDb() {
       name TEXT NOT NULL,
       host TEXT NOT NULL,
       username TEXT NOT NULL,
-      encrypted_password TEXT NOT NULL,
+      encrypted_password TEXT,
+      auth_mode TEXT DEFAULT 'password', -- password | key
+      encrypted_private_key TEXT,
+      public_key TEXT,
+      host_key_fingerprint TEXT,
+      allow_password_fallback INTEGER DEFAULT 1,
       port INTEGER DEFAULT 22,
       sync_when_connected INTEGER DEFAULT 0,
       last_connected_at TEXT,
@@ -186,6 +191,36 @@ export function initDb() {
   if (!hasSyncWhenConnected) {
     console.log('Migrating devices: adding sync_when_connected column');
     db.exec('ALTER TABLE devices ADD COLUMN sync_when_connected INTEGER DEFAULT 0');
+  }
+
+  const hasAuthMode = devicesTableInfo.some(col => col.name === 'auth_mode');
+  if (!hasAuthMode) {
+    console.log('Migrating devices: adding auth_mode column');
+    db.exec("ALTER TABLE devices ADD COLUMN auth_mode TEXT DEFAULT 'password'");
+  }
+
+  const hasEncryptedPrivateKey = devicesTableInfo.some(col => col.name === 'encrypted_private_key');
+  if (!hasEncryptedPrivateKey) {
+    console.log('Migrating devices: adding encrypted_private_key column');
+    db.exec('ALTER TABLE devices ADD COLUMN encrypted_private_key TEXT');
+  }
+
+  const hasPublicKey = devicesTableInfo.some(col => col.name === 'public_key');
+  if (!hasPublicKey) {
+    console.log('Migrating devices: adding public_key column');
+    db.exec('ALTER TABLE devices ADD COLUMN public_key TEXT');
+  }
+
+  const hasHostKeyFingerprint = devicesTableInfo.some(col => col.name === 'host_key_fingerprint');
+  if (!hasHostKeyFingerprint) {
+    console.log('Migrating devices: adding host_key_fingerprint column');
+    db.exec('ALTER TABLE devices ADD COLUMN host_key_fingerprint TEXT');
+  }
+
+  const hasAllowPasswordFallback = devicesTableInfo.some(col => col.name === 'allow_password_fallback');
+  if (!hasAllowPasswordFallback) {
+    console.log('Migrating devices: adding allow_password_fallback column');
+    db.exec('ALTER TABLE devices ADD COLUMN allow_password_fallback INTEGER DEFAULT 1');
   }
 
   const docsSubTableInfo = db.prepare("PRAGMA table_info(document_subscriptions)").all() as any[];
