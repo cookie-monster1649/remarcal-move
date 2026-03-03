@@ -12,8 +12,8 @@ services:
     ports:
       - "3000:3000"
     volumes:
-      - /DATA/AppData/remarcal:/data
-      - /DATA/AppData/remarcal/secrets:/run/secrets:ro
+      - /DATA/AppData/remarcal/data:/data
+      - /DATA/AppData/remarcal/data/secrets:/run/secrets:ro
       - /tmp:/tmp
     environment:
       - NODE_ENV=production
