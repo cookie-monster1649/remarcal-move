@@ -3,6 +3,14 @@ import db from '../db.js';
 import { encrypt } from '../services/encryptionService.js';
 import { CalDavService } from '../services/caldavService.js';
 import { v4 as uuidv4 } from 'uuid';
+import {
+  getErrorMessage,
+  isObject,
+  optionalString,
+  requireString,
+  validateCalendars,
+  ValidationError,
+} from '../utils/validation.js';
 
 const router = express.Router();
 const caldavService = new CalDavService();
@@ -15,21 +23,38 @@ router.get('/', (req, res) => {
 
 // Discover Calendars
 router.post('/discover', async (req, res) => {
-  const { url, username, password, accountId } = req.body;
   try {
+    if (!isObject(req.body)) {
+      throw new ValidationError('Request body must be a JSON object');
+    }
+
+    const url = requireString(req.body.url, 'url');
+    const username = optionalString(req.body.username, 'username');
+    const password = optionalString(req.body.password, 'password');
+    const accountId = optionalString(req.body.accountId, 'accountId');
+
     const calendars = await caldavService.discoverCalendars({ url, username, password, accountId });
     res.json(calendars);
   } catch (err: any) {
-    res.status(500).json({ error: err.message });
+    const error = getErrorMessage(err);
+    res.status(error.status).json({ error: error.message });
   }
 });
 
 // Create Account
 router.post('/', (req, res) => {
-  const { name, url, username, password, selected_calendars } = req.body;
-  const id = uuidv4();
-  
   try {
+    if (!isObject(req.body)) {
+      throw new ValidationError('Request body must be a JSON object');
+    }
+
+    const name = requireString(req.body.name, 'name');
+    const url = requireString(req.body.url, 'url');
+    const username = requireString(req.body.username, 'username');
+    const password = requireString(req.body.password, 'password');
+    const selected_calendars = validateCalendars(req.body.selected_calendars, 'selected_calendars');
+    const id = uuidv4();
+
     const encrypted_password = encrypt(password);
     db.prepare(`
       INSERT INTO caldav_accounts (id, name, url, username, encrypted_password, selected_calendars)
@@ -38,16 +63,26 @@ router.post('/', (req, res) => {
     
     res.json({ id, message: 'Account created' });
   } catch (err: any) {
-    res.status(500).json({ error: err.message });
+    const error = getErrorMessage(err);
+    res.status(error.status).json({ error: error.message });
   }
 });
 
 // Update Account
 router.put('/:id', (req, res) => {
   const { id } = req.params;
-  const { name, url, username, password, selected_calendars } = req.body;
   
   try {
+    if (!isObject(req.body)) {
+      throw new ValidationError('Request body must be a JSON object');
+    }
+
+    const name = requireString(req.body.name, 'name');
+    const url = requireString(req.body.url, 'url');
+    const username = requireString(req.body.username, 'username');
+    const password = optionalString(req.body.password, 'password');
+    const selected_calendars = validateCalendars(req.body.selected_calendars, 'selected_calendars');
+
     if (password) {
       const encrypted_password = encrypt(password);
       db.prepare(`
@@ -65,7 +100,8 @@ router.put('/:id', (req, res) => {
     
     res.json({ message: 'Account updated' });
   } catch (err: any) {
-    res.status(500).json({ error: err.message });
+    const error = getErrorMessage(err);
+    res.status(error.status).json({ error: error.message });
   }
 });
 

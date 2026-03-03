@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build
+
+      - name: Start server
+        env:
+          APP_MASTER_KEY: ci-test-master-key-which-is-at-least-32-chars
+          DATA_DIR: ./data-ci
+        run: |
+          npx tsx server.ts > /tmp/remarcal-ci.log 2>&1 &
+          echo $! > /tmp/remarcal-ci.pid
+          sleep 4
+
+      - name: Smoke healthcheck
+        run: npm run smoke
+
+      - name: Stop server
+        if: always()
+        run: |
+          if [ -f /tmp/remarcal-ci.pid ]; then
+            kill $(cat /tmp/remarcal-ci.pid) || true
+          fi

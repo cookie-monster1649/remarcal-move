@@ -8,8 +8,7 @@ A self-hosted, private tool to sync CalDAV calendars to reMarkable Paper Pro as 
 - **Scheduled Sync**: Automatically update your planner on the device (e.g., daily).
 - **Secure**: 
   - CalDAV credentials encrypted at rest.
-  - SSH keys mounted read-only.
-  - Basic Authentication.
+  - Device credentials encrypted at rest.
 - **Dockerized**: Easy deployment with Docker Compose.
 - **Persistence**: All data stored in a single volume.
 
@@ -18,7 +17,7 @@ A self-hosted, private tool to sync CalDAV calendars to reMarkable Paper Pro as 
 ### Prerequisites
 
 - Docker & Docker Compose
-- An SSH key pair authorized on your reMarkable device.
+- SSH access to your reMarkable device (username/password).
 - A CalDAV account (e.g., Google Calendar, Fastmail, Nextcloud).
 
 ### Installation
@@ -26,12 +25,7 @@ A self-hosted, private tool to sync CalDAV calendars to reMarkable Paper Pro as 
 1. **Clone the repository** (or download files).
 
 2. **Configure SSH Access**:
-   - **Option A: SSH Key (Recommended)**:
-     Place your private SSH key in `./ssh_key`.
-     Ensure `REMARKABLE_SSH_KEY_PATH` is set to `/app/ssh_key` in `.env`.
-   - **Option B: Password**:
-     Set `REMARKABLE_PASSWORD` in your `.env` file.
-     You can remove the `./ssh_key` volume mount in `docker-compose.yml` if not using keys.
+   Set `REMARKABLE_PASSWORD` in your `.env` file (used as a default/fallback when no device is configured in-app).
 
 3. **Configure Environment**:
    Create a `.env` file based on `.env.example`.
@@ -40,10 +34,7 @@ A self-hosted, private tool to sync CalDAV calendars to reMarkable Paper Pro as 
    APP_MASTER_KEY=your_very_long_random_hex_string_at_least_32_bytes
    REMARKABLE_HOST=10.11.99.1
    REMARKABLE_USER=root
-   # If using password:
    REMARKABLE_PASSWORD=your_password
-   # If using key:
-   REMARKABLE_SSH_KEY_PATH=/app/ssh_key
    ```
 
    **Important**: `APP_MASTER_KEY` is used to encrypt your CalDAV passwords. Keep it safe.
@@ -58,13 +49,13 @@ A self-hosted, private tool to sync CalDAV calendars to reMarkable Paper Pro as 
 
 ### Usage
 
-1. **Login**: Use the credentials defined in `AUTH_USER` / `AUTH_PASS`.
-2. **Settings**: Go to the Settings tab and add a CalDAV account.
+1. **Settings**: Go to the Settings tab and add a CalDAV account.
+2. **Devices**: Add and verify your reMarkable SSH connection.
 3. **Library**: Go to the Library tab and add a Document.
    - **Remote Path**: The full path on the reMarkable where the PDF should be uploaded. 
      - Example: `/home/root/.local/share/remarkable/xochitl/calendar.pdf` (Note: This replaces the file directly. Ensure you have a backup or use a unique name).
    - **Schedule**: Cron expression (e.g., `0 0 * * *` for daily at midnight).
-4. **Sync**: You can manually sync or wait for the schedule.
+4. **Sync**: Manually sync or wait for the schedule.
 
 ## Persistence & Backup
 
@@ -87,7 +78,7 @@ docker run --rm -v remarcal_data:/data -v $(pwd):/backup ubuntu tar xvf /backup/
 ## Security
 
 - **APP_MASTER_KEY**: Used for AES-256-GCM encryption of sensitive fields in the DB.
-- **SSH Key**: Mounted read-only into the container. Never stored in the DB.
+- **Credentials**: CalDAV and device passwords are encrypted before storing in SQLite.
 - **Bind Address**: By default, the app binds to `127.0.0.1` to prevent accidental exposure. To expose to LAN, change the port mapping in `docker-compose.yml` to `0.0.0.0:3000:3000`.
 
 ## Troubleshooting

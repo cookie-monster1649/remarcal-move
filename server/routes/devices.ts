@@ -3,6 +3,14 @@ import db from '../db.js';
 import { encrypt, decrypt } from '../services/encryptionService.js';
 import { SSHService } from '../services/sshService.js';
 import { v4 as uuidv4 } from 'uuid';
+import {
+  getErrorMessage,
+  isObject,
+  optionalInteger,
+  optionalString,
+  requireString,
+  ValidationError,
+} from '../utils/validation.js';
 
 const router = express.Router();
 
@@ -14,15 +22,23 @@ router.get('/', (req, res) => {
 
 // Create Device
 router.post('/', async (req, res) => {
-  const { name, host, username, password, port } = req.body;
-  const id = uuidv4();
-  
   try {
+    if (!isObject(req.body)) {
+      throw new ValidationError('Request body must be a JSON object');
+    }
+
+    const name = requireString(req.body.name, 'name');
+    const host = requireString(req.body.host, 'host');
+    const username = requireString(req.body.username, 'username');
+    const password = optionalString(req.body.password, 'password');
+    const port = optionalInteger(req.body.port, 'port', 1, 65535) || 22;
+    const id = uuidv4();
+
     // Validate connection first
     const testService = new SSHService({
         host,
         username,
-        port: parseInt(port || '22', 10),
+        port,
         password
     });
 
@@ -40,20 +56,30 @@ router.post('/', async (req, res) => {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `);
     
-    stmt.run(id, name, host, username, encrypted_password, port || 22, new Date().toISOString(), new Date().toISOString());
+    stmt.run(id, name, host, username, encrypted_password, port, new Date().toISOString(), new Date().toISOString());
     
     res.json({ id, message: 'Device created and verified' });
   } catch (err: any) {
-    res.status(500).json({ error: err.message });
+    const error = getErrorMessage(err);
+    res.status(error.status).json({ error: error.message });
   }
 });
 
 // Update Device
 router.put('/:id', async (req, res) => {
   const { id } = req.params;
-  const { name, host, username, password, port } = req.body;
   
   try {
+    if (!isObject(req.body)) {
+      throw new ValidationError('Request body must be a JSON object');
+    }
+
+    const name = requireString(req.body.name, 'name');
+    const host = requireString(req.body.host, 'host');
+    const username = requireString(req.body.username, 'username');
+    const password = optionalString(req.body.password, 'password');
+    const port = optionalInteger(req.body.port, 'port', 1, 65535) || 22;
+
     let passwordToTest = password;
     let encrypted_password = null;
 
@@ -70,7 +96,7 @@ router.put('/:id', async (req, res) => {
     const testService = new SSHService({
         host,
         username,
-        port: parseInt(port || '22', 10),
+        port,
         password: passwordToTest
     });
 
@@ -84,11 +110,12 @@ router.put('/:id', async (req, res) => {
       UPDATE devices 
       SET name = ?, host = ?, username = ?, encrypted_password = ?, port = ?, last_connected_at = ?
       WHERE id = ?
-    `).run(name, host, username, encrypted_password, port || 22, new Date().toISOString(), id);
+    `).run(name, host, username, encrypted_password, port, new Date().toISOString(), id);
     
     res.json({ message: 'Device updated and verified' });
   } catch (err: any) {
-    res.status(500).json({ error: err.message });
+    const error = getErrorMessage(err);
+    res.status(error.status).json({ error: error.message });
   }
 });
 
@@ -111,18 +138,27 @@ router.delete('/:id', (req, res) => {
 
 // Test Connection Endpoint (Optional, if UI wants to test without saving)
 router.post('/test', async (req, res) => {
-    const { host, username, password, port } = req.body;
     try {
+        if (!isObject(req.body)) {
+          throw new ValidationError('Request body must be a JSON object');
+        }
+
+        const host = requireString(req.body.host, 'host');
+        const username = requireString(req.body.username, 'username');
+        const password = optionalString(req.body.password, 'password');
+        const port = optionalInteger(req.body.port, 'port', 1, 65535) || 22;
+
         const testService = new SSHService({
             host,
             username,
             password,
-            // port not yet supported in SSHService config interface fully, need to update it
+            port,
         });
         await testService.testConnection();
         res.json({ message: 'Connection successful' });
     } catch (err: any) {
-        res.status(400).json({ error: err.message });
+        const error = getErrorMessage(err);
+        res.status(error.status === 500 ? 400 : error.status).json({ error: error.message });
     }
 });
 

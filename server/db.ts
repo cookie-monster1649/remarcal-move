@@ -20,6 +20,8 @@ const db = new Database(DB_PATH);
 
 // Enable WAL mode for better concurrency
 db.pragma('journal_mode = WAL');
+// Enforce foreign key constraints (required in SQLite; off by default)
+db.pragma('foreign_keys = ON');
 
 export function initDb() {
   // Create tables
