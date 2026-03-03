@@ -6,6 +6,7 @@ import { v4 as uuidv4 } from 'uuid';
 import {
   getErrorMessage,
   isObject,
+  optionalBoolean,
   optionalInteger,
   optionalString,
   requireString,
@@ -16,7 +17,7 @@ const router = express.Router();
 
 // List Devices (redact sensitive info)
 router.get('/', (req, res) => {
-  const devices = db.prepare('SELECT id, name, host, username, port, last_connected_at, created_at FROM devices').all();
+  const devices = db.prepare('SELECT id, name, host, username, port, sync_when_connected, last_connected_at, created_at FROM devices').all();
   res.json(devices);
 });
 
@@ -31,6 +32,7 @@ router.post('/', async (req, res) => {
     const host = requireString(req.body.host, 'host');
     const username = requireString(req.body.username, 'username');
     const password = optionalString(req.body.password, 'password');
+    const sync_when_connected = optionalBoolean(req.body.sync_when_connected, 'sync_when_connected') || false;
     const port = optionalInteger(req.body.port, 'port', 1, 65535) || 22;
     const id = uuidv4();
 
@@ -52,11 +54,11 @@ router.post('/', async (req, res) => {
     const encrypted_password = password ? encrypt(password) : null;
     
     const stmt = db.prepare(`
-      INSERT INTO devices (id, name, host, username, encrypted_password, port, last_connected_at, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO devices (id, name, host, username, encrypted_password, port, sync_when_connected, last_connected_at, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     
-    stmt.run(id, name, host, username, encrypted_password, port, new Date().toISOString(), new Date().toISOString());
+    stmt.run(id, name, host, username, encrypted_password, port, sync_when_connected ? 1 : 0, new Date().toISOString(), new Date().toISOString());
     
     res.json({ id, message: 'Device created and verified' });
   } catch (err: any) {
@@ -78,6 +80,7 @@ router.put('/:id', async (req, res) => {
     const host = requireString(req.body.host, 'host');
     const username = requireString(req.body.username, 'username');
     const password = optionalString(req.body.password, 'password');
+    const sync_when_connected = optionalBoolean(req.body.sync_when_connected, 'sync_when_connected') || false;
     const port = optionalInteger(req.body.port, 'port', 1, 65535) || 22;
 
     let passwordToTest = password;
@@ -108,9 +111,9 @@ router.put('/:id', async (req, res) => {
 
     db.prepare(`
       UPDATE devices 
-      SET name = ?, host = ?, username = ?, encrypted_password = ?, port = ?, last_connected_at = ?
+      SET name = ?, host = ?, username = ?, encrypted_password = ?, port = ?, sync_when_connected = ?, last_connected_at = ?
       WHERE id = ?
-    `).run(name, host, username, encrypted_password, port, new Date().toISOString(), id);
+    `).run(name, host, username, encrypted_password, port, sync_when_connected ? 1 : 0, new Date().toISOString(), id);
     
     res.json({ message: 'Device updated and verified' });
   } catch (err: any) {

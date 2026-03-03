@@ -8,8 +8,6 @@ interface Document {
   title: string;
   type: string;
   remote_path: string;
-  sync_enabled: number;
-  sync_schedule: string;
   last_synced_at: string;
   sync_status: 'idle' | 'syncing' | 'error';
   last_error: string;
@@ -34,6 +32,7 @@ interface Device {
   host: string;
   username: string;
   port: number;
+  sync_when_connected: number;
   last_connected_at: string;
 }
 
@@ -56,8 +55,6 @@ export default function App() {
   const [docForm, setDocForm] = useState({
     title: '',
     remote_path: '/home/root/.local/share/remarkable/xochitl/calendar.pdf',
-    sync_enabled: false,
-    sync_schedule: '0 0 * * *', // Daily at midnight
     year: new Date().getFullYear(),
     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
     caldav_account_ids: [] as string[],
@@ -81,7 +78,8 @@ export default function App() {
     host: '',
     username: 'root',
     password: '',
-    port: 22
+    port: 22,
+    sync_when_connected: false,
   });
 
   const fetchData = async () => {
@@ -226,7 +224,7 @@ export default function App() {
       }
       setShowDeviceForm(false);
       setEditingDevice(null);
-      setDeviceForm({ name: '', host: '', username: 'root', password: '', port: 22 });
+      setDeviceForm({ name: '', host: '', username: 'root', password: '', port: 22, sync_when_connected: false });
       fetchData();
     } catch (err: any) {
       setModalError(err.response?.data?.error || err.message);
@@ -347,8 +345,6 @@ export default function App() {
                     setDocForm({
                         title: '',
                         remote_path: '/home/root/.local/share/remarkable/xochitl/calendar.pdf',
-                        sync_enabled: false,
-                        sync_schedule: '0 0 * * *',
                         year: new Date().getFullYear(),
                         timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
                         caldav_account_ids: accounts.length > 0 ? [accounts[0].id] : [],
@@ -382,7 +378,7 @@ export default function App() {
                                 <div className="flex items-center gap-4 text-xs text-stone-500">
                                     <span className="flex items-center gap-1">
                                         <Clock size={12} />
-                                        {doc.sync_enabled ? `Scheduled: ${doc.sync_schedule}` : 'Manual Sync Only'}
+                                        {doc.device_id ? 'Sync when connected (device setting)' : 'Manual Sync Only'}
                                     </span>
                                     {doc.last_synced_at && (
                                         <span>Last synced: {new Date(doc.last_synced_at).toLocaleString()}</span>
@@ -407,8 +403,6 @@ export default function App() {
                                         setDocForm({
                                             title: doc.title,
                                             remote_path: doc.remote_path,
-                                            sync_enabled: !!doc.sync_enabled,
-                                            sync_schedule: doc.sync_schedule,
                                             year: doc.year || new Date().getFullYear(),
                                             timezone: doc.timezone || 'UTC',
                                             caldav_account_ids: doc.caldav_account_ids || (doc.caldav_account_id ? [doc.caldav_account_id] : []),
@@ -443,7 +437,7 @@ export default function App() {
               <button 
                 onClick={() => {
                     setEditingDevice(null);
-                    setDeviceForm({ name: '', host: '', username: 'root', password: '', port: 22 });
+                    setDeviceForm({ name: '', host: '', username: 'root', password: '', port: 22, sync_when_connected: false });
                     setShowDeviceForm(true);
                 }}
                 className="flex items-center px-4 py-2 bg-stone-900 text-white rounded-lg hover:bg-stone-800"
@@ -465,13 +459,21 @@ export default function App() {
                                 {deviceStatus[dev.id] === 'checking' && <RefreshCw size={14} className="animate-spin text-stone-400" title="Checking..." />}
                             </div>
                             <p className="text-sm text-stone-500 font-mono mt-1">{dev.username}@{dev.host}:{dev.port}</p>
+                            <p className="text-xs text-stone-500 mt-1">{dev.sync_when_connected ? 'Sync when connected: enabled' : 'Sync when connected: disabled'}</p>
                             <p className="text-xs text-stone-400 mt-1">Last connected: {new Date(dev.last_connected_at).toLocaleString()}</p>
                         </div>
                         <div className="flex gap-2">
                             <button 
                                 onClick={() => {
                                     setEditingDevice(dev);
-                                    setDeviceForm({ ...dev, password: '' }); // Don't show password
+                                    setDeviceForm({
+                                        name: dev.name,
+                                        host: dev.host,
+                                        username: dev.username,
+                                        password: '',
+                                        port: dev.port,
+                                        sync_when_connected: !!dev.sync_when_connected,
+                                    }); // Don't show password
                                     setShowDeviceForm(true);
                                 }}
                                 className="p-2 text-stone-500 hover:text-stone-900 hover:bg-stone-100 rounded-lg"
@@ -642,29 +644,9 @@ export default function App() {
                             )}
                         </div>
                     </div>
-                    <div className="flex items-center gap-2">
-                        <input 
-                            type="checkbox" 
-                            id="sync_enabled"
-                            checked={docForm.sync_enabled}
-                            onChange={e => setDocForm({...docForm, sync_enabled: e.target.checked})}
-                        />
-                        <label htmlFor="sync_enabled" className="text-sm font-medium">Enable Scheduled Sync</label>
+                    <div className="text-xs text-stone-500 bg-stone-50 border border-stone-200 rounded-lg p-3">
+                        Automatic sync is controlled per device via the <span className="font-medium">Sync when connected</span> setting in the Devices tab.
                     </div>
-                    {docForm.sync_enabled && (
-                        <div>
-                            <label className="block text-sm font-medium mb-1">Schedule (Cron)</label>
-                            <input 
-                                type="text" 
-                                required
-                                className="w-full px-3 py-2 border rounded-lg font-mono"
-                                value={docForm.sync_schedule}
-                                onChange={e => setDocForm({...docForm, sync_schedule: e.target.value})}
-                                placeholder="0 0 * * *"
-                            />
-                            <p className="text-xs text-stone-500 mt-1">Example: 0 0 * * * (Daily at midnight)</p>
-                        </div>
-                    )}
                     <div className="flex justify-end gap-2 mt-6">
                         <button 
                             type="button"
@@ -753,6 +735,18 @@ export default function App() {
                             placeholder={editingDevice ? "(Unchanged)" : "Required"}
                         />
                     </div>
+                    <div className="flex items-center gap-2">
+                        <input
+                            type="checkbox"
+                            id="sync_when_connected"
+                            checked={deviceForm.sync_when_connected}
+                            onChange={e => setDeviceForm({ ...deviceForm, sync_when_connected: e.target.checked })}
+                        />
+                        <label htmlFor="sync_when_connected" className="text-sm font-medium">Sync when connected</label>
+                    </div>
+
+                    <p className="text-xs text-stone-500">Checks every 5 minutes and syncs linked documents when this device is reachable.</p>
+
                     <div className="flex justify-end gap-2 mt-6">
                         <button 
                             type="button"

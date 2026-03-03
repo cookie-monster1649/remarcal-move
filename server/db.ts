@@ -43,6 +43,7 @@ export function initDb() {
       username TEXT NOT NULL,
       encrypted_password TEXT NOT NULL,
       port INTEGER DEFAULT 22,
+      sync_when_connected INTEGER DEFAULT 0,
       last_connected_at TEXT,
       created_at TEXT DEFAULT CURRENT_TIMESTAMP
     );
@@ -52,8 +53,6 @@ export function initDb() {
       title TEXT NOT NULL,
       type TEXT DEFAULT 'pdf',
       remote_path TEXT,
-      sync_enabled INTEGER DEFAULT 0,
-      sync_schedule TEXT, -- Cron expression or similar
       last_synced_at TEXT,
       sync_status TEXT DEFAULT 'idle', -- idle, checking, syncing, error
       last_error TEXT,
@@ -95,6 +94,56 @@ export function initDb() {
   if (!hasTimezone) {
     console.log('Migrating documents: adding timezone column');
     db.exec("ALTER TABLE documents ADD COLUMN timezone TEXT DEFAULT 'UTC'");
+  }
+
+  const hasSyncEnabled = docsTableInfo.some(col => col.name === 'sync_enabled');
+  const hasSyncSchedule = docsTableInfo.some(col => col.name === 'sync_schedule');
+  if (hasSyncEnabled || hasSyncSchedule) {
+    console.log('Migrating documents: removing deprecated sync_enabled/sync_schedule columns');
+    db.exec('PRAGMA foreign_keys = OFF');
+    try {
+      db.exec(`
+        ALTER TABLE documents RENAME TO documents_old;
+
+        CREATE TABLE documents (
+          id TEXT PRIMARY KEY,
+          title TEXT NOT NULL,
+          type TEXT DEFAULT 'pdf',
+          remote_path TEXT,
+          last_synced_at TEXT,
+          sync_status TEXT DEFAULT 'idle',
+          last_error TEXT,
+          year INTEGER DEFAULT 2025,
+          timezone TEXT DEFAULT 'UTC',
+          caldav_account_id TEXT,
+          device_id TEXT,
+          created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+          updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+          FOREIGN KEY (caldav_account_id) REFERENCES caldav_accounts(id),
+          FOREIGN KEY (device_id) REFERENCES devices(id)
+        );
+
+        INSERT INTO documents (
+          id, title, type, remote_path, last_synced_at, sync_status, last_error,
+          year, timezone, caldav_account_id, device_id, created_at, updated_at
+        )
+        SELECT
+          id, title, type, remote_path, last_synced_at, sync_status, last_error,
+          year, timezone, caldav_account_id, device_id, created_at, updated_at
+        FROM documents_old;
+
+        DROP TABLE documents_old;
+      `);
+    } finally {
+      db.exec('PRAGMA foreign_keys = ON');
+    }
+  }
+
+  const devicesTableInfo = db.prepare("PRAGMA table_info(devices)").all() as any[];
+  const hasSyncWhenConnected = devicesTableInfo.some(col => col.name === 'sync_when_connected');
+  if (!hasSyncWhenConnected) {
+    console.log('Migrating devices: adding sync_when_connected column');
+    db.exec('ALTER TABLE devices ADD COLUMN sync_when_connected INTEGER DEFAULT 0');
   }
 
   // Cleanup: Reset stuck syncing status

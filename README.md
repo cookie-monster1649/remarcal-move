@@ -5,7 +5,7 @@ A self-hosted, private tool to sync CalDAV calendars to reMarkable Paper Pro as 
 ## Features
 
 - **Multi-document Library**: Manage multiple planner configurations.
-- **Scheduled Sync**: Automatically update your planner on the device (e.g., daily).
+- **Sync when Connected**: Every 5 minutes, the app performs a lightweight device connectivity check and syncs linked documents when a device is reachable.
 - **Secure**: 
   - CalDAV credentials encrypted at rest.
   - Device credentials encrypted at rest.
@@ -54,8 +54,8 @@ A self-hosted, private tool to sync CalDAV calendars to reMarkable Paper Pro as 
 3. **Library**: Go to the Library tab and add a Document.
    - **Remote Path**: The full path on the reMarkable where the PDF should be uploaded. 
      - Example: `/home/root/.local/share/remarkable/xochitl/calendar.pdf` (Note: This replaces the file directly. Ensure you have a backup or use a unique name).
-   - **Schedule**: Cron expression (e.g., `0 0 * * *` for daily at midnight).
-4. **Sync**: Manually sync or wait for the schedule.
+4. **Devices**: Enable **Sync when connected** per device if you want automatic background sync.
+5. **Sync**: Manually sync anytime, or let automatic sync run whenever an enabled device is reachable.
 
 ## Persistence & Backup
 

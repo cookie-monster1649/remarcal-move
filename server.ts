@@ -3,7 +3,7 @@ import { createServer as createViteServer } from 'vite';
 import cors from 'cors';
 import { initDb } from './server/db.js';
 import { initEncryption } from './server/services/encryptionService.js';
-import { schedulerService } from './server/services/schedulerService.js';
+import { connectionSyncService } from './server/services/connectionSyncService.js';
 import libraryRoutes from './server/routes/library.js';
 import settingsRoutes from './server/routes/settings.js';
 import devicesRoutes from './server/routes/devices.js';
@@ -13,7 +13,7 @@ async function startServer() {
   try {
     initEncryption();
     initDb();
-    schedulerService.init();
+    connectionSyncService.start();
   } catch (err: any) {
     console.error('Failed to initialize application:', err.message);
     process.exit(1);

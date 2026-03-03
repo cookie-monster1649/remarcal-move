@@ -8,6 +8,7 @@ export interface SSHConfig {
   username?: string;
   password?: string;
   port?: number; // Add port
+  readyTimeout?: number;
 }
 
 export interface DeviceFile {
@@ -32,6 +33,7 @@ export class SSHService {
       port: this.config.port || parseInt(process.env.REMARKABLE_PORT || '22', 10),
       username: this.config.username || process.env.REMARKABLE_USER || 'root',
       password: this.config.password || process.env.REMARKABLE_PASSWORD,
+      readyTimeout: this.config.readyTimeout || 20000,
     };
   }
 
@@ -55,7 +57,7 @@ export class SSHService {
             port: config.port,
             username: config.username,
             password: config.password,
-            readyTimeout: 20000,
+            readyTimeout: config.readyTimeout,
             tryKeyboard: true,
           });
     });

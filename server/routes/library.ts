@@ -1,12 +1,10 @@
 import express from 'express';
 import db from '../db.js';
 import { SyncService } from '../services/syncService.js';
-import { schedulerService } from '../services/schedulerService.js';
 import { v4 as uuidv4 } from 'uuid';
 import {
   getErrorMessage,
   isObject,
-  optionalBoolean,
   optionalInteger,
   optionalString,
   optionalStringArray,
@@ -41,26 +39,19 @@ router.post('/', (req, res) => {
     }
 
     const title = requireString(req.body.title, 'title');
-    const type = optionalString(req.body.type, 'type') || 'pdf';
     const remote_path = requireString(req.body.remote_path, 'remote_path');
-    const sync_enabled = optionalBoolean(req.body.sync_enabled, 'sync_enabled') || false;
-    const sync_schedule = optionalString(req.body.sync_schedule, 'sync_schedule');
     const caldav_account_ids = optionalStringArray(req.body.caldav_account_ids, 'caldav_account_ids') || [];
     const device_id = optionalString(req.body.device_id, 'device_id');
     const year = optionalInteger(req.body.year, 'year', 1970, 2100) || new Date().getFullYear();
     const timezone = optionalString(req.body.timezone, 'timezone') || 'UTC';
 
-    if (sync_enabled && !sync_schedule) {
-      throw new ValidationError('sync_schedule is required when sync_enabled is true');
-    }
-
     const id = uuidv4();
 
     const transaction = db.transaction(() => {
       db.prepare(`
-        INSERT INTO documents (id, title, type, remote_path, sync_enabled, sync_schedule, caldav_account_id, device_id, year, timezone)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(id, title, type || 'pdf', remote_path, sync_enabled ? 1 : 0, sync_schedule, caldav_account_ids?.[0] || null, device_id, year || new Date().getFullYear(), timezone || 'UTC');
+        INSERT INTO documents (id, title, type, remote_path, caldav_account_id, device_id, year, timezone)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(id, title, 'pdf', remote_path, caldav_account_ids?.[0] || null, device_id, year || new Date().getFullYear(), timezone || 'UTC');
 
       if (Array.isArray(caldav_account_ids)) {
         const insertAccount = db.prepare('INSERT INTO document_accounts (document_id, account_id) VALUES (?, ?)');
@@ -71,10 +62,6 @@ router.post('/', (req, res) => {
     });
 
     transaction();
-    
-    if (sync_enabled && sync_schedule) {
-      schedulerService.scheduleJob(id, sync_schedule);
-    }
     
     res.json({ id, message: 'Document created' });
   } catch (err: any) {
@@ -94,23 +81,17 @@ router.put('/:id', (req, res) => {
 
     const title = requireString(req.body.title, 'title');
     const remote_path = requireString(req.body.remote_path, 'remote_path');
-    const sync_enabled = optionalBoolean(req.body.sync_enabled, 'sync_enabled') || false;
-    const sync_schedule = optionalString(req.body.sync_schedule, 'sync_schedule');
     const caldav_account_ids = optionalStringArray(req.body.caldav_account_ids, 'caldav_account_ids') || [];
     const device_id = optionalString(req.body.device_id, 'device_id');
     const year = optionalInteger(req.body.year, 'year', 1970, 2100) || new Date().getFullYear();
     const timezone = optionalString(req.body.timezone, 'timezone') || 'UTC';
 
-    if (sync_enabled && !sync_schedule) {
-      throw new ValidationError('sync_schedule is required when sync_enabled is true');
-    }
-
     const transaction = db.transaction(() => {
       db.prepare(`
         UPDATE documents 
-        SET title = ?, remote_path = ?, sync_enabled = ?, sync_schedule = ?, caldav_account_id = ?, device_id = ?, year = ?, timezone = ?, updated_at = CURRENT_TIMESTAMP
+        SET title = ?, remote_path = ?, caldav_account_id = ?, device_id = ?, year = ?, timezone = ?, updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
-      `).run(title, remote_path, sync_enabled ? 1 : 0, sync_schedule, caldav_account_ids?.[0] || null, device_id, year, timezone || 'UTC', id);
+      `).run(title, remote_path, caldav_account_ids?.[0] || null, device_id, year, timezone || 'UTC', id);
 
       // Update linked accounts
       db.prepare('DELETE FROM document_accounts WHERE document_id = ?').run(id);
@@ -124,12 +105,6 @@ router.put('/:id', (req, res) => {
 
     transaction();
     
-    if (sync_enabled && sync_schedule) {
-      schedulerService.scheduleJob(id, sync_schedule);
-    } else {
-      schedulerService.cancelJob(id);
-    }
-    
     res.json({ message: 'Document updated' });
   } catch (err: any) {
     const error = getErrorMessage(err);
@@ -141,7 +116,6 @@ router.put('/:id', (req, res) => {
 router.delete('/:id', (req, res) => {
   const { id } = req.params;
   try {
-    schedulerService.cancelJob(id);
     db.prepare('DELETE FROM documents WHERE id = ?').run(id);
     // Also delete local file if exists
     // fs.unlinkSync(path.join(process.env.DATA_DIR, 'docs', `${id}.pdf`));
