@@ -201,6 +201,62 @@ export function initDb() {
     `);
   }
 
+  // Repair stale foreign keys left behind by old migrations where documents table was renamed.
+  // If link tables still reference `documents_old`, updates/deletes on documents can fail with:
+  // "no such table: main.documents_old"
+  const docAccountsFkInfo = db.prepare('PRAGMA foreign_key_list(document_accounts)').all() as any[];
+  const docSubsFkInfo = db.prepare('PRAGMA foreign_key_list(document_subscriptions)').all() as any[];
+  const hasStaleDocAccountsFk = docAccountsFkInfo.some((row) => row.table === 'documents_old');
+  const hasStaleDocSubsFk = docSubsFkInfo.some((row) => row.table === 'documents_old');
+
+  if (hasStaleDocAccountsFk || hasStaleDocSubsFk) {
+    console.log('Repairing stale foreign keys: replacing references to documents_old');
+    db.exec('PRAGMA foreign_keys = OFF');
+    try {
+      if (hasStaleDocAccountsFk) {
+        db.exec(`
+          ALTER TABLE document_accounts RENAME TO document_accounts_old_fk;
+
+          CREATE TABLE document_accounts (
+            document_id TEXT,
+            account_id TEXT,
+            PRIMARY KEY (document_id, account_id),
+            FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE,
+            FOREIGN KEY (account_id) REFERENCES caldav_accounts(id) ON DELETE CASCADE
+          );
+
+          INSERT INTO document_accounts (document_id, account_id)
+          SELECT document_id, account_id
+          FROM document_accounts_old_fk;
+
+          DROP TABLE document_accounts_old_fk;
+        `);
+      }
+
+      if (hasStaleDocSubsFk) {
+        db.exec(`
+          ALTER TABLE document_subscriptions RENAME TO document_subscriptions_old_fk;
+
+          CREATE TABLE document_subscriptions (
+            document_id TEXT,
+            subscription_id TEXT,
+            PRIMARY KEY (document_id, subscription_id),
+            FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE,
+            FOREIGN KEY (subscription_id) REFERENCES calendar_subscriptions(id) ON DELETE CASCADE
+          );
+
+          INSERT INTO document_subscriptions (document_id, subscription_id)
+          SELECT document_id, subscription_id
+          FROM document_subscriptions_old_fk;
+
+          DROP TABLE document_subscriptions_old_fk;
+        `);
+      }
+    } finally {
+      db.exec('PRAGMA foreign_keys = ON');
+    }
+  }
+
   // Cleanup: Reset stuck syncing status
   db.prepare("UPDATE documents SET sync_status = 'idle' WHERE sync_status = 'syncing'").run();
   

@@ -81,9 +81,46 @@ export class PDFService {
     const pageWidth = pxToMm(954);  // ~107.2 mm
     const pageHeight = pxToMm(1695); // ~190.5 mm
     
-    // Helper to truncate text
-    const truncate = (str: string, maxLength: number) => {
-      return str.length > maxLength ? str.substring(0, maxLength) + '...' : str;
+    const sanitizeTitle = (str: string) => {
+      const cleaned = (str || '')
+        .normalize('NFKD')
+        .replace(/[\u200D\uFE0F]/g, '')
+        .replace(/\p{Extended_Pictographic}/gu, '')
+        .replace(/[\u{1F1E6}-\u{1F1FF}]/gu, '') // regional flags
+        .replace(/\s+/g, ' ')
+        .trim();
+      return cleaned || 'Untitled';
+    };
+
+    const cutToFit = (str: string, maxWidth: number) => {
+      let out = str || '';
+      while (out.length > 0 && doc.getTextWidth(out) > maxWidth) {
+        out = out.slice(0, -1);
+      }
+      return out;
+    };
+
+    const dayMs = 24 * 60 * 60 * 1000;
+    const dayDiff = (a: string, b: string) => {
+      const aa = new Date(`${a}T00:00:00.000Z`).getTime();
+      const bb = new Date(`${b}T00:00:00.000Z`).getTime();
+      return Math.floor((aa - bb) / dayMs);
+    };
+    const addDayStr = (s: string, days: number) => {
+      const t = new Date(`${s}T00:00:00.000Z`);
+      t.setUTCDate(t.getUTCDate() + days);
+      return t.toISOString().slice(0, 10);
+    };
+
+    const renderEvents = events.map(e => ({
+      ...e,
+      summary: sanitizeTitle(e.summary),
+    }));
+
+    const isAllDayEvent = (e: CalendarEvent) => {
+      const duration = e.end.getTime() - e.start.getTime();
+      const isMidnight = parseInt(formatInTimeZone(e.start, tz, 'H')) === 0 && parseInt(formatInTimeZone(e.start, tz, 'm')) === 0;
+      return !!e.allDay || duration >= 86400000 || isMidnight;
     };
 
     const doc = new jsPDF({
@@ -279,7 +316,7 @@ export class PDFService {
             const dX = x + 2 + (c * cellW);
             const dY = y + 13 + (r * cellH);
             
-            const hasEvent = events.some(e => getTzDateStr(e.start) === getTzDateStr(d));
+            const hasEvent = renderEvents.some(e => getTzDateStr(e.start) === getTzDateStr(d));
             if (hasEvent) {
                 doc.setFont("helvetica", "bold");
                 doc.setFillColor(220, 220, 220);
@@ -328,7 +365,7 @@ export class PDFService {
             const gridX = 8;
             const gridY = 25; 
             const gridW = pageWidth - 13;
-            const gridH = pageHeight - 35;
+            const gridH = pageHeight - 30;
             const cellW = gridW / 7;
             const cellH = gridH / 6; 
             
@@ -353,6 +390,51 @@ export class PDFService {
                         doc.link(0, gridY + i*cellH, 8, cellH, { pageNumber: pageMap.weeks[wKey] });
                     }
                 }
+            }
+
+            type MonthSpan = { row: number; startCol: number; endCol: number; lane: number; title: string; titleOnStart: boolean };
+            const spanByRow: Record<number, MonthSpan[]> = { 0: [], 1: [], 2: [], 3: [], 4: [], 5: [] };
+
+            for (let row = 0; row < 6; row++) {
+              const rowStart = mDays[row * 7];
+              const rowEnd = mDays[row * 7 + 6];
+              if (!rowStart || !rowEnd) continue;
+              const rowStartStr = getTzDateStr(rowStart);
+              const rowEndNextStr = addDayStr(getTzDateStr(rowEnd), 1);
+
+              const rowSegments = renderEvents
+                .filter(e => isAllDayEvent(e))
+                .map(e => {
+                  const startStr = getTzDateStr(e.start);
+                  const endStr = getTzDateStr(e.end);
+                  const multi = dayDiff(endStr, startStr) > 1;
+                  if (!multi) return null;
+                  const segStart = startStr > rowStartStr ? startStr : rowStartStr;
+                  const segEnd = endStr < rowEndNextStr ? endStr : rowEndNextStr;
+                  if (!(segStart < segEnd)) return null;
+                  const startCol = Math.max(0, dayDiff(segStart, rowStartStr));
+                  const endCol = Math.min(6, dayDiff(segEnd, rowStartStr) - 1);
+                  if (endCol < startCol) return null;
+                  return {
+                    row,
+                    startCol,
+                    endCol,
+                    title: e.summary,
+                    titleOnStart: segStart === startStr,
+                  };
+                })
+                .filter(Boolean) as Array<{ row: number; startCol: number; endCol: number; title: string; titleOnStart: boolean }>;
+
+              const lanes: number[] = [];
+              rowSegments
+                .sort((a, b) => a.startCol - b.startCol || a.endCol - b.endCol)
+                .forEach(seg => {
+                  let lane = 0;
+                  while (lane < lanes.length && seg.startCol <= lanes[lane]) lane++;
+                  if (lane === lanes.length) lanes.push(-1);
+                  lanes[lane] = seg.endCol;
+                  spanByRow[row].push({ ...seg, lane });
+                });
             }
 
             mDays.forEach((d, idx) => {
@@ -383,28 +465,45 @@ export class PDFService {
                 }
                 
                 const currentDayStr = getTzDateStr(d);
-                const dayEvents = events.filter(e => {
+                const dayEvents = renderEvents.filter(e => {
                     const startStr = getTzDateStr(e.start);
                     const endStr = getTzDateStr(e.end);
-                    const duration = e.end.getTime() - e.start.getTime();
-                    const isMidnight = parseInt(formatInTimeZone(e.start, tz, 'H')) === 0 && parseInt(formatInTimeZone(e.start, tz, 'm')) === 0;
-                    const isAllDay = e.allDay || duration >= 86400000 || isMidnight;
-
-                    if (isAllDay) {
-                        return currentDayStr >= startStr && currentDayStr < endStr;
-                    }
+                    const isAllDay = isAllDayEvent(e);
+                    const isMultiAllDay = isAllDay && dayDiff(endStr, startStr) > 1;
+                    if (isMultiAllDay) return false;
+                    if (isAllDay) return currentDayStr >= startStr && currentDayStr < endStr;
                     return startStr === currentDayStr;
                 });
-                let eventY = y + 8;
+                const spanLanes = spanByRow[r].length > 0 ? (Math.max(...spanByRow[r].map(s => s.lane)) + 1) : 0;
+                let eventY = y + 8 + spanLanes * 3.5;
                 doc.setFontSize(5);
                 doc.setTextColor(0);
                 dayEvents.slice(0, 4).forEach(e => {
-                    const summary = truncate(e.summary, 12);
+                    const summary = cutToFit(e.summary, cellW - 4);
                     doc.roundedRect(x + 1, eventY, cellW - 2, 3, 1, 1, 'S');
                     doc.text(summary, x + 2, eventY + 2);
                     eventY += 4;
                 });
             });
+
+            for (let row = 0; row < 6; row++) {
+              const rowY = gridY + row * cellH;
+              spanByRow[row].forEach(seg => {
+                const sx = gridX + seg.startCol * cellW + 1;
+                const ex = gridX + (seg.endCol + 1) * cellW - 1;
+                const sy = rowY + 8 + seg.lane * 3.5;
+                const sh = 3;
+                doc.setFillColor(245, 245, 245);
+                doc.setDrawColor(100);
+                doc.setLineWidth(0.1);
+                doc.roundedRect(sx, sy, ex - sx, sh, 0.8, 0.8, 'FD');
+                if (seg.titleOnStart) {
+                  doc.setFontSize(5);
+                  doc.setTextColor(0);
+                  doc.text(cutToFit(seg.title, ex - sx - 2), sx + 1, sy + 2.1);
+                }
+              });
+            }
         }
         
         // --- Week View ---
@@ -436,10 +535,12 @@ export class PDFService {
                  {c:0, r:2}, {c:1, r:2},
              ];
              
+             const dayMeta: Array<{ index: number; x: number; y: number; w: number; h: number; date: Date }> = [];
              weekDays.forEach((d, i) => {
                  const pos = gridMap[i];
                  const x = gridX + pos.c*cellW;
                  const y = gridY + pos.r*cellH;
+                 dayMeta.push({ index: i, x, y, w: cellW, h: cellH, date: d });
                  
                  doc.setDrawColor(0);
                  doc.setLineWidth(0.1);
@@ -462,31 +563,98 @@ export class PDFService {
                  }
                  
                  const currentDayStr = getTzDateStr(d);
-                 const dayEvents = events.filter(e => {
+                 const dayEvents = renderEvents.filter(e => {
                      const startStr = getTzDateStr(e.start);
                      const endStr = getTzDateStr(e.end);
-                     const duration = e.end.getTime() - e.start.getTime();
-                     const isMidnight = parseInt(formatInTimeZone(e.start, tz, 'H')) === 0 && parseInt(formatInTimeZone(e.start, tz, 'm')) === 0;
-                     const isAllDay = e.allDay || duration >= 86400000 || isMidnight;
+                     const isAllDay = isAllDayEvent(e);
+                     const isMultiAllDay = isAllDay && dayDiff(endStr, startStr) > 1;
 
+                     if (isMultiAllDay) return false;
                      if (isAllDay) {
                          return currentDayStr >= startStr && currentDayStr < endStr;
                      }
                      return startStr === currentDayStr;
                  });
-                 let eventY = y + 12;
+                 const allDayEvents = dayEvents.filter(e => isAllDayEvent(e));
+                 const timedEvents = dayEvents.filter(e => !isAllDayEvent(e));
+                 let eventY = y + 10;
                  doc.setFontSize(6);
                  doc.setFont("helvetica", "normal");
                  doc.setTextColor(0);
-                 dayEvents.forEach(e => {
+                 allDayEvents.forEach(e => {
+                     if (eventY < y + cellH - 5) {
+                         const summary = cutToFit(e.summary, cellW - 7);
+                         doc.roundedRect(x + 2, eventY, cellW - 4, 5, 1, 1, 'S');
+                         doc.text(summary, x + 3, eventY + 3.5);
+                         eventY += 6;
+                     }
+                 });
+                 timedEvents.forEach(e => {
                      if (eventY < y + cellH - 5) {
                          const time = getTzTimeStr(e.start);
-                         const summary = truncate(e.summary, 20);
+                         const summary = cutToFit(e.summary, cellW - 12);
                          doc.roundedRect(x + 2, eventY, cellW - 4, 5, 1, 1, 'S');
                          doc.text(`${time} ${summary}`, x + 3, eventY + 3.5);
                          eventY += 6;
                      }
                  });
+             });
+
+             const rowGroups = [[0, 1, 2], [3, 4], [5, 6]];
+             const weekStartStr = getTzDateStr(wStart);
+             const weekEndNextStr = addDayStr(getTzDateStr(wEnd), 1);
+             rowGroups.forEach((group, groupIndex) => {
+               const rowStartIdx = group[0];
+               const rowEndIdx = group[group.length - 1];
+               const rowStartStr = getTzDateStr(weekDays[rowStartIdx]);
+               const rowEndNextStr = addDayStr(getTzDateStr(weekDays[rowEndIdx]), 1);
+               const segments = renderEvents
+                 .filter(e => isAllDayEvent(e))
+                 .map(e => {
+                   const startStr = getTzDateStr(e.start);
+                   const endStr = getTzDateStr(e.end);
+                   if (dayDiff(endStr, startStr) <= 1) return null;
+                   const clippedStart = startStr > weekStartStr ? startStr : weekStartStr;
+                   const clippedEnd = endStr < weekEndNextStr ? endStr : weekEndNextStr;
+                   if (!(clippedStart < clippedEnd)) return null;
+                   const segStart = clippedStart > rowStartStr ? clippedStart : rowStartStr;
+                   const segEnd = clippedEnd < rowEndNextStr ? clippedEnd : rowEndNextStr;
+                   if (!(segStart < segEnd)) return null;
+                   const startIdx = dayDiff(segStart, weekStartStr);
+                   const endIdx = dayDiff(segEnd, weekStartStr) - 1;
+                   return {
+                     startIdx,
+                     endIdx,
+                     title: e.summary,
+                     titleOnStart: segStart === startStr,
+                   };
+                 })
+                 .filter(Boolean) as Array<{ startIdx: number; endIdx: number; title: string; titleOnStart: boolean }>;
+
+               const lanes: number[] = [];
+               segments.sort((a, b) => a.startIdx - b.startIdx || a.endIdx - b.endIdx).forEach(seg => {
+                 let lane = 0;
+                 while (lane < lanes.length && seg.startIdx <= lanes[lane]) lane++;
+                 if (lane === lanes.length) lanes.push(-1);
+                 lanes[lane] = seg.endIdx;
+
+                 const startCell = dayMeta[seg.startIdx];
+                 const endCell = dayMeta[seg.endIdx];
+                 if (!startCell || !endCell) return;
+                 const sx = startCell.x + 2;
+                 const ex = endCell.x + endCell.w - 2;
+                 const sy = startCell.y + 10 + lane * 4;
+                 const sh = 3.2;
+                 doc.setFillColor(245, 245, 245);
+                 doc.setDrawColor(100);
+                 doc.setLineWidth(0.1);
+                 doc.roundedRect(sx, sy, ex - sx, sh, 0.8, 0.8, 'FD');
+                 if (seg.titleOnStart) {
+                   doc.setFontSize(6);
+                   doc.setTextColor(0);
+                   doc.text(cutToFit(seg.title, ex - sx - 2), sx + 1, sy + 2.3);
+                 }
+               });
              });
              
              const notesX = gridX + 2*cellW;
@@ -527,7 +695,7 @@ export class PDFService {
         doc.text("All day", 7, contentY + 6); 
         
         const currentDayStr = getTzDateStr(day);
-        const allDayEvents = events.filter(e => {
+        const allDayEvents = renderEvents.filter(e => {
             const startStr = getTzDateStr(e.start);
             const endStr = getTzDateStr(e.end);
             
@@ -545,7 +713,7 @@ export class PDFService {
         let adX = 35; 
         allDayEvents.forEach(e => {
             doc.setFontSize(7);
-            const summary = truncate(e.summary, 30);
+            const summary = cutToFit(e.summary, 30);
             const textW = doc.getTextWidth(summary) + 4;
             
             doc.setFillColor(245, 245, 245);
@@ -585,7 +753,7 @@ export class PDFService {
             }
         }
         
-        const dayEvents = events.filter(e => {
+        const dayEvents = renderEvents.filter(e => {
             const startStr = getTzDateStr(e.start);
             const endStr = getTzDateStr(e.end);
             
