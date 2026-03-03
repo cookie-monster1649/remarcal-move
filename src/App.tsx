@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Calendar, Settings, Upload, Plus, Trash2, RefreshCw, FileText, CheckCircle, XCircle, Clock, Tablet, Wifi, WifiOff } from 'lucide-react';
+import { Calendar, Settings, Upload, Plus, Trash2, RefreshCw, FileText, CheckCircle, XCircle, Clock, Tablet, Wifi, WifiOff, Download } from 'lucide-react';
 import axios from 'axios';
 
 // Types
@@ -381,6 +381,29 @@ export default function App() {
     }
   };
 
+  const downloadDocPdf = async (doc: Document) => {
+    try {
+      const response = await axios.get(`/api/library/${doc.id}/download`, {
+        responseType: 'blob',
+      });
+      const blob = new Blob([response.data], { type: 'application/pdf' });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      const safeTitle = (doc.title || `document-${doc.id}`)
+        .toString()
+        .replace(/[^a-zA-Z0-9._-]+/g, '_')
+        .replace(/^_+|_+$/g, '') || `document-${doc.id}`;
+      link.href = url;
+      link.download = `${safeTitle}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err: any) {
+      alert(err.response?.data?.error || err.message || 'Failed to download PDF');
+    }
+  };
+
   return (
     <div className="min-h-screen bg-stone-100 text-stone-900 font-sans">
       <header className="bg-white border-b border-stone-200 p-4 sticky top-0 z-10">
@@ -499,6 +522,13 @@ export default function App() {
                                 )}
                             </div>
                             <div className="flex items-center gap-2">
+                                <button
+                                    onClick={() => downloadDocPdf(doc)}
+                                    className="p-2 text-stone-500 hover:text-stone-900 hover:bg-stone-100 rounded-lg"
+                                    title="Download PDF"
+                                >
+                                    <Download size={20} />
+                                </button>
                                 <button 
                                     onClick={() => syncDoc(doc.id)}
                                     disabled={doc.sync_status === 'syncing'}

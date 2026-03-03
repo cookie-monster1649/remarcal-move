@@ -2,6 +2,8 @@ import express from 'express';
 import db from '../db.js';
 import { SyncService } from '../services/syncService.js';
 import { v4 as uuidv4 } from 'uuid';
+import * as fs from 'fs';
+import * as path from 'path';
 import {
   getErrorMessage,
   isObject,
@@ -152,6 +154,38 @@ router.post('/:id/sync', async (req, res) => {
     res.json({ message: 'Sync started' });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// Download PDF (generate on-demand if needed)
+router.get('/:id/download', async (req, res) => {
+  const { id } = req.params;
+  try {
+    const doc = db.prepare('SELECT * FROM documents WHERE id = ?').get(id) as any;
+    if (!doc) {
+      return res.status(404).json({ error: 'Document not found' });
+    }
+
+    const localPath = path.resolve(path.join(process.env.DATA_DIR || './data', 'docs', `${id}.pdf`));
+    if (!fs.existsSync(localPath)) {
+      await syncService.generateDocumentPDF(id);
+    }
+
+    if (!fs.existsSync(localPath)) {
+      return res.status(500).json({ error: 'Failed to generate PDF' });
+    }
+
+    const safeTitle = (doc.title || `document-${id}`)
+      .toString()
+      .replace(/[^a-zA-Z0-9._-]+/g, '_')
+      .replace(/^_+|_+$/g, '') || `document-${id}`;
+    const filename = `${safeTitle}.pdf`;
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    return res.sendFile(localPath);
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
   }
 });
 

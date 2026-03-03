@@ -12,19 +12,16 @@ const pdfService = new PDFService();
 const sshService = new SSHService();
 
 export class SyncService {
-  async syncDocument(docId: string) {
-    // 1. Get Document
+  async generateDocumentPDF(docId: string) {
     const doc = db.prepare('SELECT * FROM documents WHERE id = ?').get(docId) as any;
     if (!doc) throw new Error(`Document ${docId} not found`);
 
-    // Get all linked accounts
     const linkedAccounts = db.prepare(`
       SELECT a.* FROM caldav_accounts a
       JOIN document_accounts da ON a.id = da.account_id
       WHERE da.document_id = ?
     `).all(docId) as any[];
 
-    // Fallback to legacy single account if no linked accounts found in join table
     if (linkedAccounts.length === 0 && doc.caldav_account_id) {
       const legacyAccount = db.prepare('SELECT * FROM caldav_accounts WHERE id = ?').get(doc.caldav_account_id) as any;
       if (legacyAccount) linkedAccounts.push(legacyAccount);
@@ -40,79 +37,86 @@ export class SyncService {
       throw new Error('No calendar sources configured for this document');
     }
 
+    const year = doc.year || new Date().getFullYear();
+    const targetTimezone = doc.timezone || 'UTC';
+    const startDate = `${year}-01-01`;
+    const endDate = `${year}-12-31`;
+    const allEvents = [];
+
+    for (const account of linkedAccounts) {
+      const password = decrypt(account.encrypted_password);
+      let selectedCalendars = [];
+      try {
+        selectedCalendars = JSON.parse(account.selected_calendars || '[]');
+      } catch (e) {
+        console.warn('Failed to parse selected_calendars for account', account.id);
+      }
+
+      const calendarUrls = selectedCalendars.length > 0
+        ? selectedCalendars.map((c: any) => c.url)
+        : [account.url];
+
+      for (const url of calendarUrls) {
+        try {
+          const { events } = await calDavService.fetchEvents({
+            url,
+            username: account.username,
+            password: password,
+            startDate,
+            endDate
+          });
+
+          allEvents.push(...events);
+        } catch (err: any) {
+          console.warn(`Failed to fetch events for account ${account.name} calendar ${url}:`, err.message);
+        }
+      }
+    }
+
+    for (const subscription of linkedSubscriptions) {
+      try {
+        await subscriptionService.fetchSubscription(subscription.id);
+      } catch (err: any) {
+        console.warn(`Failed refreshing subscription ${subscription.id}: ${err.message}`);
+      }
+
+      const subEvents = db.prepare(`
+        SELECT summary, start_at, end_at, location, description, all_day, timezone
+        FROM subscription_events
+        WHERE subscription_id = ? AND end_at >= ? AND start_at <= ?
+      `).all(subscription.id, `${startDate}T00:00:00.000Z`, `${endDate}T23:59:59.999Z`) as any[];
+
+      for (const event of subEvents) {
+        allEvents.push({
+          summary: event.summary || 'Untitled Event',
+          start: new Date(event.start_at),
+          end: new Date(event.end_at),
+          location: event.location || undefined,
+          description: event.description || undefined,
+          allDay: !!event.all_day,
+          timezone: event.timezone || undefined,
+        });
+      }
+    }
+
+    const pdfBuffer = pdfService.generate(allEvents, { year, timezone: targetTimezone });
+    const localPath = path.join(process.env.DATA_DIR || './data', 'docs', `${docId}.pdf`);
+    fs.mkdirSync(path.dirname(localPath), { recursive: true });
+    fs.writeFileSync(localPath, pdfBuffer);
+
+    return { doc, localPath };
+  }
+
+  async syncDocument(docId: string) {
+    // 1. Get Document
+    const doc = db.prepare('SELECT * FROM documents WHERE id = ?').get(docId) as any;
+    if (!doc) throw new Error(`Document ${docId} not found`);
+
     // Update status to syncing
     db.prepare('UPDATE documents SET sync_status = ?, last_error = NULL WHERE id = ?').run('syncing', docId);
 
     try {
-      // 2. Fetch Events from all accounts
-      const year = doc.year || new Date().getFullYear();
-      const targetTimezone = doc.timezone || 'UTC';
-      const startDate = `${year}-01-01`;
-      const endDate = `${year}-12-31`;
-      const allEvents = [];
-
-      for (const account of linkedAccounts) {
-        const password = decrypt(account.encrypted_password);
-        let selectedCalendars = [];
-        try {
-          selectedCalendars = JSON.parse(account.selected_calendars || '[]');
-        } catch (e) {
-          console.warn('Failed to parse selected_calendars for account', account.id);
-        }
-
-        const calendarUrls = selectedCalendars.length > 0 
-          ? selectedCalendars.map((c: any) => c.url) 
-          : [account.url];
-
-        for (const url of calendarUrls) {
-          try {
-            const { events } = await calDavService.fetchEvents({
-              url,
-              username: account.username,
-              password: password,
-              startDate,
-              endDate
-            });
-            
-            allEvents.push(...events);
-          } catch (err: any) {
-            console.warn(`Failed to fetch events for account ${account.name} calendar ${url}:`, err.message);
-          }
-        }
-      }
-
-      for (const subscription of linkedSubscriptions) {
-        try {
-          await subscriptionService.fetchSubscription(subscription.id);
-        } catch (err: any) {
-          console.warn(`Failed refreshing subscription ${subscription.id}: ${err.message}`);
-        }
-
-        const subEvents = db.prepare(`
-          SELECT summary, start_at, end_at, location, description, all_day, timezone
-          FROM subscription_events
-          WHERE subscription_id = ? AND end_at >= ? AND start_at <= ?
-        `).all(subscription.id, `${startDate}T00:00:00.000Z`, `${endDate}T23:59:59.999Z`) as any[];
-
-        for (const event of subEvents) {
-          allEvents.push({
-            summary: event.summary || 'Untitled Event',
-            start: new Date(event.start_at),
-            end: new Date(event.end_at),
-            location: event.location || undefined,
-            description: event.description || undefined,
-            allDay: !!event.all_day,
-            timezone: event.timezone || undefined,
-          });
-        }
-      }
-
-      // 3. Generate PDF
-      const pdfBuffer = pdfService.generate(allEvents, { year, timezone: targetTimezone });
-      
-      // Save locally to /data/docs for persistence/cache
-      const localPath = path.join(process.env.DATA_DIR || './data', 'docs', `${docId}.pdf`);
-      fs.writeFileSync(localPath, pdfBuffer);
+      const { localPath } = await this.generateDocumentPDF(docId);
 
     // 4. Upload to Device
     if (doc.device_id) {
