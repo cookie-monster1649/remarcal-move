@@ -1,4 +1,4 @@
-import { Client, utils as sshUtils } from 'ssh2';
+import * as ssh2 from 'ssh2';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
@@ -29,6 +29,10 @@ export class SSHService {
   }
 
   static generateKeyPair(comment = 'remarcal-device-key'): { publicKey: string; privateKey: string } {
+    const sshUtils = (ssh2 as any).utils;
+    if (!sshUtils?.generateKeyPairSync) {
+      throw new Error('ssh2 key generation utility unavailable in this runtime');
+    }
     const keys = (sshUtils as any).generateKeyPairSync('ed25519', { comment });
     return {
       publicKey: keys.public,
@@ -61,14 +65,14 @@ export class SSHService {
     conn.end();
   }
 
-  private async connect(): Promise<Client> {
+  private async connect(): Promise<ssh2.Client> {
     const config = this.getConfig();
     if (!config.password && !config.privateKey) {
       throw new Error('No SSH authentication configured. Provide password or private key.');
     }
 
     return new Promise((resolve, reject) => {
-      const conn = new Client();
+      const conn = new ssh2.Client();
       const sshConfig: any = {
         host: config.host,
         port: config.port,
@@ -95,7 +99,7 @@ export class SSHService {
     });
   }
 
-  private async execCommand(conn: Client, command: string): Promise<string> {
+  private async execCommand(conn: ssh2.Client, command: string): Promise<string> {
     return new Promise((resolve, reject) => {
       conn.exec(command, (err, stream) => {
         if (err) return reject(err);
