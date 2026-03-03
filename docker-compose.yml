@@ -17,8 +17,10 @@ services:
     environment:
       - NODE_ENV=production
       - PORT=3000
+      - DATA_DIR=/data
       - APP_ADMIN_PASSWORD=${APP_ADMIN_PASSWORD}
       - APP_ALLOWED_ORIGIN=${APP_ALLOWED_ORIGIN:-http://nuc.tail0c48d8.ts.net:3000}
+      - APP_SECURE_COOKIES=${APP_SECURE_COOKIES:-false}
       - APP_MASTER_KEY=${APP_MASTER_KEY}
       - SYNC_DRY_RUN=${SYNC_DRY_RUN:-false}
       - SYNC_BACKUP_REMOTE=${SYNC_BACKUP_REMOTE:-true}

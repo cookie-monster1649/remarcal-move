@@ -38,11 +38,13 @@ A self-hosted, private tool to sync calendar data (CalDAV + ICS subscriptions) t
    APP_MASTER_KEY=your_long_random_master_key
    APP_ADMIN_PASSWORD=your_admin_ui_password
    APP_ALLOWED_ORIGIN=http://nuc.tail0c48d8.ts.net:3000
+   APP_SECURE_COOKIES=false
    ```
 
    **Important**:
    - `APP_MASTER_KEY` is required and must be at least 32 characters.
    - `APP_ADMIN_PASSWORD` is required; app refuses startup without it.
+   - Keep `APP_SECURE_COOKIES=false` when accessing over HTTP on LAN. Set `true` only behind HTTPS.
 
 4. **Run with Docker Compose**:
 

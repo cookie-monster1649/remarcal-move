@@ -76,7 +76,7 @@ export function getValidSessionFromCookie(cookieHeader?: string): SessionRecord 
 }
 
 export function setSessionCookie(res: Response, token: string): void {
-  const secure = process.env.NODE_ENV === 'production';
+  const secure = process.env.APP_SECURE_COOKIES === 'true';
   const parts = [
     `remarcal_session=${encodeURIComponent(token)}`,
     'HttpOnly',
@@ -89,7 +89,7 @@ export function setSessionCookie(res: Response, token: string): void {
 }
 
 export function clearSessionCookie(res: Response): void {
-  const secure = process.env.NODE_ENV === 'production';
+  const secure = process.env.APP_SECURE_COOKIES === 'true';
   const parts = [
     'remarcal_session=',
     'HttpOnly',
