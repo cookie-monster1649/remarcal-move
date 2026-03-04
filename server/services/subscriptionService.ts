@@ -22,8 +22,13 @@ type FetchWindow = {
 export class SubscriptionService {
   private readonly minFrequencyMinutes = 15;
 
-  private isCancelled(component: ICAL.Component): boolean {
-    const status = (component.getFirstPropertyValue('status') as string | null)?.toUpperCase();
+  private isCancelled(componentLike: ICAL.Component | ICAL.Event | null | undefined): boolean {
+    const component =
+      componentLike instanceof ICAL.Event
+        ? componentLike.component
+        : componentLike;
+
+    const status = (component?.getFirstPropertyValue('status') as string | null)?.toUpperCase();
     return status === 'CANCELLED';
   }
 
