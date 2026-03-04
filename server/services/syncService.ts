@@ -9,6 +9,16 @@ import * as path from 'path';
 
 const calDavService = new CalDavService();
 const pdfService = new PDFService();
+const traceCalendar = ['1', 'true', 'yes', 'on'].includes(String(process.env.CALENDAR_TRACE || '').toLowerCase());
+
+function traceLog(message: string, payload?: Record<string, unknown>) {
+  if (!traceCalendar) return;
+  if (payload) {
+    console.log(`[calendar-trace] ${message}`, payload);
+    return;
+  }
+  console.log(`[calendar-trace] ${message}`);
+}
 
 function buildDeviceSshConfig(device: any) {
   const decryptedPrivateKey = device.encrypted_private_key ? decrypt(device.encrypted_private_key) : undefined;
@@ -109,6 +119,23 @@ export class SyncService {
         WHERE subscription_id = ? AND end_at >= ? AND start_at <= ?
       `).all(subscription.id, `${startDate}T00:00:00.000Z`, `${endDate}T23:59:59.999Z`) as any[];
 
+      if (traceCalendar) {
+        const distinct = db.prepare(`
+          SELECT COUNT(DISTINCT start_at) AS distinct_starts
+          FROM subscription_events
+          WHERE subscription_id = ? AND end_at >= ? AND start_at <= ?
+        `).get(subscription.id, `${startDate}T00:00:00.000Z`, `${endDate}T23:59:59.999Z`) as any;
+
+        traceLog('sync:subscription-db-range', {
+          docId,
+          subscriptionId: subscription.id,
+          totalRows: subEvents.length,
+          distinctStarts: distinct?.distinct_starts ?? 0,
+          rangeStart: `${startDate}T00:00:00.000Z`,
+          rangeEnd: `${endDate}T23:59:59.999Z`,
+        });
+      }
+
       for (const event of subEvents) {
         allEvents.push({
           summary: event.summary || 'Untitled Event',
@@ -120,6 +147,30 @@ export class SyncService {
           timezone: event.timezone || undefined,
         });
       }
+    }
+
+    if (traceCalendar) {
+      const sample = allEvents.slice(0, 40).map((e: any) => ({
+        summary: e.summary,
+        startIso: e.start instanceof Date && Number.isFinite(e.start.getTime()) ? e.start.toISOString() : null,
+        endIso: e.end instanceof Date && Number.isFinite(e.end.getTime()) ? e.end.toISOString() : null,
+        allDay: !!e.allDay,
+        timezone: e.timezone || null,
+      }));
+
+      const distinctStartCount = new Set(
+        sample
+          .map((e) => e.startIso)
+          .filter((v): v is string => !!v),
+      ).size;
+
+      traceLog('sync:pdf-input-sample', {
+        docId,
+        totalAllEvents: allEvents.length,
+        sampleCount: sample.length,
+        sampleDistinctStarts: distinctStartCount,
+        sample,
+      });
     }
 
     const pdfBuffer = pdfService.generate(allEvents, { year, timezone: targetTimezone });

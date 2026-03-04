@@ -25,6 +25,17 @@ export class SubscriptionService {
 
   private readonly maxOccurrenceIterations = 20000;
 
+  private readonly traceCalendar = ['1', 'true', 'yes', 'on'].includes(String(process.env.CALENDAR_TRACE || '').toLowerCase());
+
+  private traceLog(message: string, payload?: Record<string, unknown>) {
+    if (!this.traceCalendar) return;
+    if (payload) {
+      console.log(`[calendar-trace] ${message}`, payload);
+      return;
+    }
+    console.log(`[calendar-trace] ${message}`);
+  }
+
   private toComponent(componentLike: ICAL.Component | ICAL.Event | null | undefined): ICAL.Component | null {
     if (!componentLike) return null;
 
@@ -243,6 +254,14 @@ export class SubscriptionService {
       const body = typeof response.data === 'string' ? response.data : String(response.data || '');
       const hash = this.bodyHash(body);
 
+      this.traceLog('fetchSubscription:start', {
+        subscriptionId,
+        bodyLength: body.length,
+        explicitWindow,
+        rangeStart: rangeStart.toISOString(),
+        rangeEnd: rangeEnd.toISOString(),
+      });
+
       db.prepare(`
         UPDATE calendar_subscriptions
         SET last_fetched_at = ?,
@@ -272,6 +291,12 @@ export class SubscriptionService {
       const vcal = new ICAL.Component(parsed);
       const vevents = vcal.getAllSubcomponents('vevent');
       const vfreebusy = vcal.getAllSubcomponents('vfreebusy');
+
+      this.traceLog('fetchSubscription:parsed', {
+        subscriptionId,
+        veventCount: vevents.length,
+        vfreebusyCount: vfreebusy.length,
+      });
 
       // Build complete event sets by UID and deterministically link exceptions.
       const eventsByUid = new Map<string, ICAL.Event>();
@@ -310,6 +335,8 @@ export class SubscriptionService {
       }
 
       const seenAt = new Date().toISOString();
+      const traceMaxRows = 60;
+      let traceRows = 0;
 
       const upsert = db.prepare(`
         INSERT INTO subscription_events (
@@ -380,6 +407,19 @@ export class SubscriptionService {
                 timezone,
                 seenAt,
               );
+
+              if (this.traceCalendar && traceRows < traceMaxRows) {
+                traceRows++;
+                this.traceLog('occurrence:upsert', {
+                  subscriptionId,
+                  uid,
+                  recurrenceId,
+                  startAt: startDate.toISOString(),
+                  endAt: endDate.toISOString(),
+                  timezone,
+                  allDay: details.startDate.isDate,
+                });
+              }
             }
             continue;
           }
@@ -403,6 +443,19 @@ export class SubscriptionService {
             this.normalizeTimezoneId(event.startDate.zone?.tzid || null),
             seenAt,
           );
+
+          if (this.traceCalendar && traceRows < traceMaxRows) {
+            traceRows++;
+            this.traceLog('single-event:upsert', {
+              subscriptionId,
+              uid,
+              recurrenceId: '',
+              startAt: startDate.toISOString(),
+              endAt: endDate.toISOString(),
+              timezone: this.normalizeTimezoneId(event.startDate.zone?.tzid || null),
+              allDay: event.startDate.isDate,
+            });
+          }
         }
 
         // Include VFREEBUSY periods as synthetic events when present in feed.
@@ -442,6 +495,26 @@ export class SubscriptionService {
           `).run(subscriptionId, seenAt, rangeStart.toISOString(), rangeEnd.toISOString());
         } else {
           db.prepare('DELETE FROM subscription_events WHERE subscription_id = ? AND last_seen_at <> ?').run(subscriptionId, seenAt);
+        }
+
+        if (this.traceCalendar) {
+          const summary = db.prepare(`
+            SELECT
+              COUNT(*) AS total,
+              COUNT(DISTINCT start_at) AS distinct_starts,
+              MIN(start_at) AS min_start,
+              MAX(start_at) AS max_start
+            FROM subscription_events
+            WHERE subscription_id = ?
+          `).get(subscriptionId) as any;
+
+          this.traceLog('fetchSubscription:db-summary', {
+            subscriptionId,
+            total: summary?.total ?? 0,
+            distinctStarts: summary?.distinct_starts ?? 0,
+            minStart: summary?.min_start ?? null,
+            maxStart: summary?.max_start ?? null,
+          });
         }
       });
 
