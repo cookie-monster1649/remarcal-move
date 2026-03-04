@@ -1,6 +1,7 @@
 import { jsPDF } from 'jspdf';
 import { format, addDays, startOfWeek, endOfWeek, startOfMonth, endOfMonth, eachDayOfInterval, isSameMonth, isSameDay, parseISO } from 'date-fns';
 import { formatInTimeZone } from 'date-fns-tz';
+import { traceConfig } from '../utils/traceConfig.js';
 
 export interface CalendarEvent {
   summary: string;
@@ -19,6 +20,35 @@ export interface PDFConfig {
 
 export class PDFService {
   generate(events: CalendarEvent[], config: PDFConfig): Buffer {
+    const tracePdf = traceConfig.pdf;
+    const traceTzFallback = traceConfig.tzFallback;
+    const traceLimit = traceConfig.limit;
+    const traceDay = traceConfig.day;
+    let traceRows = 0;
+    let fallbackRows = 0;
+
+    const tracePdfLog = (message: string, payload?: Record<string, unknown>) => {
+      if (!tracePdf) return;
+      if (traceRows >= traceLimit) return;
+      traceRows++;
+      if (payload) {
+        console.log(`[calendar-trace] ${message}`, payload);
+        return;
+      }
+      console.log(`[calendar-trace] ${message}`);
+    };
+
+    const traceFallback = (message: string, payload?: Record<string, unknown>) => {
+      if (!traceTzFallback) return;
+      if (fallbackRows >= traceLimit) return;
+      fallbackRows++;
+      if (payload) {
+        console.log(`[calendar-trace] ${message}`, payload);
+        return;
+      }
+      console.log(`[calendar-trace] ${message}`);
+    };
+
     const normalizeTimezone = (input: string | undefined | null): string | null => {
       const raw = (input || '').trim();
       if (!raw) return null;
@@ -64,6 +94,11 @@ export class PDFService {
         try {
             return formatInTimeZone(date, tz, 'yyyy-MM-dd');
         } catch (e) {
+            traceFallback('pdf:tz-fallback:date', {
+              tz,
+              inputIso: date.toISOString(),
+              error: e instanceof Error ? e.message : String(e),
+            });
             // Graceful fallback to host-local formatting to avoid collapsing
             // all timed events to the same slot when timezone parsing fails.
             return format(date, 'yyyy-MM-dd');
@@ -74,6 +109,11 @@ export class PDFService {
         try {
             return formatInTimeZone(date, tz, 'HH:mm');
         } catch (e) {
+            traceFallback('pdf:tz-fallback:time', {
+              tz,
+              inputIso: date.toISOString(),
+              error: e instanceof Error ? e.message : String(e),
+            });
             return format(date, 'HH:mm');
         }
     };
@@ -84,6 +124,11 @@ export class PDFService {
             const m = parseInt(formatInTimeZone(date, tz, 'm'));
             return h + m / 60;
         } catch (e) {
+            traceFallback('pdf:tz-fallback:hour', {
+              tz,
+              inputIso: date.toISOString(),
+              error: e instanceof Error ? e.message : String(e),
+            });
             return date.getHours() + date.getMinutes() / 60;
         }
     };
@@ -93,9 +138,23 @@ export class PDFService {
         try {
             return formatInTimeZone(date, tz, fmt, options);
         } catch (e) {
+            traceFallback('pdf:tz-fallback:format', {
+              tz,
+              fmt,
+              inputIso: date.toISOString(),
+              error: e instanceof Error ? e.message : String(e),
+            });
             return '';
         }
     };
+
+    tracePdfLog('pdf:generate:start', {
+      year: config.year,
+      timezone: tz,
+      configuredTimezone: config.timezone,
+      eventCount: events.length,
+      traceDay: traceDay || null,
+    });
 
     // 1. Setup Dimensions & Constants
     const DPI = 226;
@@ -798,11 +857,32 @@ export class PDFService {
             // For regular events, they only appear on their start day in the schedule
             return startStr === currentDayStr;
         });
+
+        const shouldTraceDay = tracePdf && (!traceDay || currentDayStr === traceDay);
+        if (shouldTraceDay) {
+          tracePdfLog('pdf:daily:bucket', {
+            day: currentDayStr,
+            totalTimedCandidates: dayEvents.length,
+            eventSample: dayEvents.slice(0, Math.min(traceLimit, dayEvents.length)).map((e) => ({
+              summary: e.summary,
+              startIso: Number.isFinite(e.start.getTime()) ? e.start.toISOString() : null,
+              endIso: Number.isFinite(e.end.getTime()) ? e.end.toISOString() : null,
+              startStr: getTzDateStr(e.start),
+              endStr: getTzDateStr(e.end),
+              allDay: !!e.allDay,
+            })),
+          });
+        }
         
         const items = dayEvents.map(e => {
-            let startH = getTzHour(e.start);
-            let endH = getTzHour(e.end);
+            const rawStartH = getTzHour(e.start);
+            const rawEndH = getTzHour(e.end);
+            let startH = rawStartH;
+            let endH = rawEndH;
             if (endH < startH) endH += 24;
+
+            const unclippedStart = startH;
+            const unclippedEnd = endH;
             
             if (startH < startHour) startH = startHour;
             if (endH > endHour) endH = endHour;
@@ -812,11 +892,34 @@ export class PDFService {
                 start: startH,
                 end: endH,
                 duration: endH - startH,
+                rawStartH,
+                rawEndH,
+                unclippedStart,
+                unclippedEnd,
                 colIndex: 0,
                 totalCols: 1
             };
         }).filter(i => i.end > i.start)
           .sort((a, b) => a.start - b.start || b.duration - a.duration);
+
+        if (shouldTraceDay) {
+          tracePdfLog('pdf:daily:placement-input', {
+            day: currentDayStr,
+            itemCount: items.length,
+            items: items.slice(0, Math.min(traceLimit, items.length)).map((i) => ({
+              summary: i.event.summary,
+              startIso: Number.isFinite(i.event.start.getTime()) ? i.event.start.toISOString() : null,
+              endIso: Number.isFinite(i.event.end.getTime()) ? i.event.end.toISOString() : null,
+              rawStartH: i.rawStartH,
+              rawEndH: i.rawEndH,
+              unclippedStart: i.unclippedStart,
+              unclippedEnd: i.unclippedEnd,
+              clippedStart: i.start,
+              clippedEnd: i.end,
+              duration: i.duration,
+            })),
+          });
+        }
         
         const clusters: typeof items[] = [];
         let currentCluster: typeof items = [];
@@ -882,6 +985,21 @@ export class PDFService {
                 const h = (item.end - item.start) * hourH;
                 const x = 15 + (item.colIndex * colW);
                 const rectW = Math.max(6, colW - columnGap);
+
+                if (shouldTraceDay) {
+                  tracePdfLog('pdf:daily:placement-rect', {
+                    day: currentDayStr,
+                    summary: item.event.summary,
+                    startHour: item.start,
+                    endHour: item.end,
+                    y,
+                    height: h,
+                    x,
+                    width: rectW,
+                    colIndex: item.colIndex,
+                    totalCols,
+                  });
+                }
                 
                 doc.setFillColor(245, 245, 245);
                 doc.setDrawColor(100);

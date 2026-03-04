@@ -4,6 +4,7 @@ import ICAL from 'ical.js';
 import { fromZonedTime } from 'date-fns-tz';
 import db from '../db.js';
 import { decrypt } from './encryptionService.js';
+import { traceConfig } from '../utils/traceConfig.js';
 
 type SubscriptionRow = {
   id: string;
@@ -25,10 +26,8 @@ export class SubscriptionService {
 
   private readonly maxOccurrenceIterations = 20000;
 
-  private readonly traceCalendar = ['1', 'true', 'yes', 'on'].includes(String(process.env.CALENDAR_TRACE || '').toLowerCase());
-
   private traceLog(message: string, payload?: Record<string, unknown>) {
-    if (!this.traceCalendar) return;
+    if (!traceConfig.ingest) return;
     if (payload) {
       console.log(`[calendar-trace] ${message}`, payload);
       return;
@@ -335,7 +334,7 @@ export class SubscriptionService {
       }
 
       const seenAt = new Date().toISOString();
-      const traceMaxRows = 60;
+      const traceMaxRows = traceConfig.limit;
       let traceRows = 0;
 
       const upsert = db.prepare(`
@@ -408,7 +407,7 @@ export class SubscriptionService {
                 seenAt,
               );
 
-              if (this.traceCalendar && traceRows < traceMaxRows) {
+              if (traceConfig.ingest && traceRows < traceMaxRows) {
                 traceRows++;
                 this.traceLog('occurrence:upsert', {
                   subscriptionId,
@@ -444,7 +443,7 @@ export class SubscriptionService {
             seenAt,
           );
 
-          if (this.traceCalendar && traceRows < traceMaxRows) {
+          if (traceConfig.ingest && traceRows < traceMaxRows) {
             traceRows++;
             this.traceLog('single-event:upsert', {
               subscriptionId,
@@ -497,7 +496,7 @@ export class SubscriptionService {
           db.prepare('DELETE FROM subscription_events WHERE subscription_id = ? AND last_seen_at <> ?').run(subscriptionId, seenAt);
         }
 
-        if (this.traceCalendar) {
+        if (traceConfig.ingest) {
           const summary = db.prepare(`
             SELECT
               COUNT(*) AS total,

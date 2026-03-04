@@ -43,6 +43,12 @@ A self-hosted, private tool to sync calendar data (CalDAV + ICS subscriptions) t
    DATA_DIR=/data
    APP_SECURE_COOKIES=false
    CALENDAR_TRACE=0
+   CAL_TRACE_INGEST=0
+   CAL_TRACE_SYNC=0
+   CAL_TRACE_PDF=0
+   CAL_TRACE_TZ_FALLBACK=0
+   CAL_TRACE_LIMIT=80
+   CAL_TRACE_DAY=
    CALDAV_HOSTNAME=nas.local
    CALDAV_HOST_IP=192.168.1.10
    ```
@@ -126,6 +132,8 @@ If subscription/PDF times look wrong, enable verbose tracing in the backend:
 
 1. Set env vars (example):
    - `CALENDAR_TRACE=1`
+   - (optional per-stage) `CAL_TRACE_INGEST=1`, `CAL_TRACE_SYNC=1`, `CAL_TRACE_PDF=1`, `CAL_TRACE_TZ_FALLBACK=1`
+   - (optional shaping) `CAL_TRACE_LIMIT=120`, `CAL_TRACE_DAY=2026-02-16`
    - `APP_ADMIN_PASSWORD=...`
    - `APP_MASTER_KEY=...`
 2. Start backend with `npm run dev:server`.
@@ -134,3 +142,5 @@ If subscription/PDF times look wrong, enable verbose tracing in the backend:
 Notes:
 - `npm run dev` starts only frontend Vite, so trace logs will not appear there.
 - Truthy values for `CALENDAR_TRACE`: `1`, `true`, `yes`, `on`.
+- If `CALENDAR_TRACE` is enabled, all trace families default to on unless explicitly set.
+- You can enable only one layer by leaving `CALENDAR_TRACE=0` and setting a specific `CAL_TRACE_*` flag to `1`.

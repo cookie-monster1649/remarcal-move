@@ -6,13 +6,12 @@ import { decrypt } from './encryptionService.js';
 import { subscriptionService } from './subscriptionService.js';
 import * as fs from 'fs';
 import * as path from 'path';
+import { traceConfig } from '../utils/traceConfig.js';
 
 const calDavService = new CalDavService();
 const pdfService = new PDFService();
-const traceCalendar = ['1', 'true', 'yes', 'on'].includes(String(process.env.CALENDAR_TRACE || '').toLowerCase());
-
 function traceLog(message: string, payload?: Record<string, unknown>) {
-  if (!traceCalendar) return;
+  if (!traceConfig.sync) return;
   if (payload) {
     console.log(`[calendar-trace] ${message}`, payload);
     return;
@@ -119,7 +118,7 @@ export class SyncService {
         WHERE subscription_id = ? AND end_at >= ? AND start_at <= ?
       `).all(subscription.id, `${startDate}T00:00:00.000Z`, `${endDate}T23:59:59.999Z`) as any[];
 
-      if (traceCalendar) {
+      if (traceConfig.sync) {
         const distinct = db.prepare(`
           SELECT COUNT(DISTINCT start_at) AS distinct_starts
           FROM subscription_events
@@ -149,8 +148,8 @@ export class SyncService {
       }
     }
 
-    if (traceCalendar) {
-      const sample = allEvents.slice(0, 40).map((e: any) => ({
+    if (traceConfig.sync) {
+      const sample = allEvents.slice(0, traceConfig.limit).map((e: any) => ({
         summary: e.summary,
         startIso: e.start instanceof Date && Number.isFinite(e.start.getTime()) ? e.start.toISOString() : null,
         endIso: e.end instanceof Date && Number.isFinite(e.end.getTime()) ? e.end.toISOString() : null,

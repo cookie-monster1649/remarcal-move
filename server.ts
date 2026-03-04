@@ -12,10 +12,18 @@ import devicesRoutes from './server/routes/devices.js';
 import authRoutes from './server/routes/auth.js';
 import { requireAuth } from './server/services/authService.js';
 import { createRateLimiter, requestTimeout } from './server/middleware/security.js';
+import { traceConfig } from './server/utils/traceConfig.js';
 
 async function startServer() {
-  const traceCalendar = ['1', 'true', 'yes', 'on'].includes(String(process.env.CALENDAR_TRACE || '').toLowerCase());
-  console.log(`[calendar-trace] ${traceCalendar ? 'enabled' : 'disabled'} (CALENDAR_TRACE=${process.env.CALENDAR_TRACE || 'unset'})`);
+  console.log(`[calendar-trace] ${traceConfig.master ? 'enabled' : 'disabled'} (CALENDAR_TRACE=${process.env.CALENDAR_TRACE || 'unset'})`);
+  console.log('[calendar-trace] config', {
+    ingest: traceConfig.ingest,
+    sync: traceConfig.sync,
+    pdf: traceConfig.pdf,
+    tzFallback: traceConfig.tzFallback,
+    limit: traceConfig.limit,
+    day: traceConfig.day,
+  });
 
   if (process.env.NODE_TLS_REJECT_UNAUTHORIZED === '0') {
     console.error('Refusing to start: NODE_TLS_REJECT_UNAUTHORIZED=0 disables TLS certificate validation.');
