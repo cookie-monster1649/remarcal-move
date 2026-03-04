@@ -101,6 +101,7 @@ export default function App() {
   });
   const [accountTestStatus, setAccountTestStatus] = useState<Record<string, { state: 'idle' | 'running' | 'success' | 'error'; message?: string; count?: number; at?: string }>>({});
   const [subscriptionFetchStatus, setSubscriptionFetchStatus] = useState<Record<string, { state: 'idle' | 'running' | 'success' | 'error'; message?: string; count?: number; at?: string }>>({});
+  const [manualSyncStatus, setManualSyncStatus] = useState<Record<string, boolean>>({});
 
   const [showDeviceForm, setShowDeviceForm] = useState(false);
   const [editingDevice, setEditingDevice] = useState<Device | null>(null);
@@ -423,11 +424,18 @@ export default function App() {
   };
 
   const syncDoc = async (id: string) => {
+    setManualSyncStatus(prev => ({ ...prev, [id]: true }));
     try {
       await axios.post(`/api/library/${id}/sync`);
       fetchData();
     } catch (err: any) {
       alert(err.message);
+    } finally {
+      setManualSyncStatus(prev => {
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
     }
   };
 
@@ -455,7 +463,7 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen bg-stone-100 text-stone-900 font-sans">
+    <div className="remarkable-ui min-h-screen bg-stone-100 text-stone-900 font-sans">
       {!authChecked ? (
         <div className="min-h-screen flex items-center justify-center text-stone-600">Checking session…</div>
       ) : !authenticated ? (
@@ -483,13 +491,13 @@ export default function App() {
         </div>
       ) : (
       <>
-      <header className="bg-white border-b border-stone-200 p-4 sticky top-0 z-10">
+      <header className="remarkable-header bg-white border-b border-stone-200 p-4 sticky top-0 z-10">
         <div className="max-w-5xl mx-auto flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <div className="w-8 h-8 bg-stone-900 text-white flex items-center justify-center rounded-lg">
+            <div className="rm-brand-mark w-8 h-8 bg-stone-900 text-white flex items-center justify-center rounded-lg">
               <Calendar size={20} />
             </div>
-            <h1 className="text-xl font-bold tracking-tight">Remarcal</h1>
+            <h1 className="rm-brand-title text-xl font-bold tracking-tight">Remarcal</h1>
             
             {/* Device Status Indicator (Summary) */}
             {devices.length > 0 && (
@@ -516,19 +524,19 @@ export default function App() {
           <nav className="flex gap-4">
             <button 
               onClick={() => setActiveTab('library')}
-              className={`px-3 py-2 rounded-lg text-sm font-medium ${activeTab === 'library' ? 'bg-stone-100 text-stone-900' : 'text-stone-500 hover:text-stone-900'}`}
+              className={`rm-nav-button ${activeTab === 'library' ? 'rm-nav-active' : ''} px-3 py-2 rounded-lg text-sm font-medium ${activeTab === 'library' ? 'bg-stone-100 text-stone-900' : 'text-stone-500 hover:text-stone-900'}`}
             >
               Library
             </button>
             <button 
               onClick={() => setActiveTab('devices')}
-              className={`px-3 py-2 rounded-lg text-sm font-medium ${activeTab === 'devices' ? 'bg-stone-100 text-stone-900' : 'text-stone-500 hover:text-stone-900'}`}
+              className={`rm-nav-button ${activeTab === 'devices' ? 'rm-nav-active' : ''} px-3 py-2 rounded-lg text-sm font-medium ${activeTab === 'devices' ? 'bg-stone-100 text-stone-900' : 'text-stone-500 hover:text-stone-900'}`}
             >
               Devices
             </button>
             <button 
               onClick={() => setActiveTab('settings')}
-              className={`px-3 py-2 rounded-lg text-sm font-medium ${activeTab === 'settings' ? 'bg-stone-100 text-stone-900' : 'text-stone-500 hover:text-stone-900'}`}
+              className={`rm-nav-button ${activeTab === 'settings' ? 'rm-nav-active' : ''} px-3 py-2 rounded-lg text-sm font-medium ${activeTab === 'settings' ? 'bg-stone-100 text-stone-900' : 'text-stone-500 hover:text-stone-900'}`}
             >
               Calendars
             </button>
@@ -570,7 +578,7 @@ export default function App() {
                     });
                     setShowDocForm(true);
                 }}
-                className="flex items-center px-4 py-2 bg-stone-900 text-white rounded-lg hover:bg-stone-800"
+                className="rm-button-primary flex items-center px-4 py-2 bg-stone-900 text-white rounded-lg hover:bg-stone-800"
               >
                 <Plus size={18} className="mr-2" />
                 Add Document
@@ -578,19 +586,21 @@ export default function App() {
             </div>
 
             {documents.length === 0 ? (
-                <div className="text-center py-12 text-stone-500 bg-white rounded-2xl border border-stone-200">
+                <div className="rm-card text-center py-12 text-stone-500 bg-white rounded-2xl border border-stone-200">
                     No documents found. Create one to get started.
                 </div>
             ) : (
                 <div className="grid gap-4">
-                    {documents.map(doc => (
-                        <div key={doc.id} className="bg-white p-6 rounded-2xl border border-stone-200 shadow-sm flex flex-col md:flex-row justify-between gap-4">
+                    {documents.map(doc => {
+                        const isSyncing = doc.sync_status === 'syncing' || !!manualSyncStatus[doc.id];
+                        return (
+                        <div key={doc.id} className="rm-card bg-white p-6 rounded-2xl border border-stone-200 shadow-sm flex flex-col md:flex-row justify-between gap-4">
                             <div className="flex-1">
                                 <div className="flex items-center gap-2 mb-1">
                                     <h3 className="font-bold text-lg">{doc.title}</h3>
-                                    {doc.sync_status === 'syncing' && <RefreshCw size={14} className="animate-spin text-blue-500" />}
+                                    {isSyncing && <RefreshCw size={14} className="animate-spin text-blue-500" />}
                                     {doc.sync_status === 'error' && <XCircle size={14} className="text-red-500" />}
-                                    {doc.sync_status === 'idle' && doc.last_synced_at && <CheckCircle size={14} className="text-green-500" />}
+                                    {!isSyncing && doc.sync_status === 'idle' && doc.last_synced_at && <CheckCircle size={14} className="text-green-500" />}
                                 </div>
                                 <p className="text-sm text-stone-500 font-mono mb-2">{doc.remote_path}</p>
                                 <div className="flex items-center gap-4 text-xs text-stone-500">
@@ -616,11 +626,11 @@ export default function App() {
                                 </button>
                                 <button 
                                     onClick={() => syncDoc(doc.id)}
-                                    disabled={doc.sync_status === 'syncing'}
+                                    disabled={isSyncing}
                                     className="p-2 text-stone-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg disabled:opacity-50"
                                     title="Sync Now"
                                 >
-                                    <RefreshCw size={20} className={doc.sync_status === 'syncing' ? 'animate-spin' : ''} />
+                                    <RefreshCw size={20} className={isSyncing ? 'animate-spin' : ''} />
                                 </button>
                                 <button 
                                     onClick={() => {
@@ -650,7 +660,7 @@ export default function App() {
                                 </button>
                             </div>
                         </div>
-                    ))}
+                    )})}
                 </div>
             )}
           </div>
@@ -666,7 +676,7 @@ export default function App() {
                     setDeviceForm({ name: '', host: '', username: 'root', password: '', port: 22, sync_when_connected: false });
                     setShowDeviceForm(true);
                 }}
-                className="flex items-center px-4 py-2 bg-stone-900 text-white rounded-lg hover:bg-stone-800"
+                className="rm-button-primary flex items-center px-4 py-2 bg-stone-900 text-white rounded-lg hover:bg-stone-800"
               >
                 <Plus size={18} className="mr-2" />
                 Add Device
@@ -675,7 +685,7 @@ export default function App() {
 
             <div className="grid gap-4">
                 {devices.map(dev => (
-                    <div key={dev.id} className="bg-white p-6 rounded-2xl border border-stone-200 shadow-sm flex justify-between items-center">
+                    <div key={dev.id} className="rm-card bg-white p-6 rounded-2xl border border-stone-200 shadow-sm flex justify-between items-center">
                         <div>
                             <div className="flex items-center gap-2">
                                 <Tablet size={18} />
@@ -730,7 +740,7 @@ export default function App() {
                       setAccountForm({ name: '', url: '', username: '', password: '', selected_calendars: [] });
                       setShowAccountForm(true);
                   }}
-                  className="flex items-center px-4 py-2 bg-stone-900 text-white rounded-lg hover:bg-stone-800"
+                  className="rm-button-primary flex items-center px-4 py-2 bg-stone-900 text-white rounded-lg hover:bg-stone-800"
                 >
                   <Plus size={18} className="mr-2" />
                   Add CalDAV
@@ -741,7 +751,7 @@ export default function App() {
                     setSubscriptionForm({ name: '', url: '', update_frequency_minutes: 30, enabled: true });
                     setShowSubscriptionForm(true);
                   }}
-                  className="flex items-center px-4 py-2 bg-stone-800 text-white rounded-lg hover:bg-stone-700"
+                  className="rm-button-secondary flex items-center px-4 py-2 bg-stone-800 text-white rounded-lg hover:bg-stone-700"
                 >
                   <Plus size={18} className="mr-2" />
                   Add Subscription
@@ -756,7 +766,7 @@ export default function App() {
                     const selected = JSON.parse(acc.selected_calendars || '[]');
                     const testStatus = accountTestStatus[acc.id];
                     return (
-                        <div key={acc.id} className="bg-white p-6 rounded-2xl border border-stone-200 shadow-sm flex justify-between items-center">
+                        <div key={acc.id} className="rm-card bg-white p-6 rounded-2xl border border-stone-200 shadow-sm flex justify-between items-center">
                             <div>
                                 <h3 className="font-bold">{acc.name}</h3>
                                 <p className="text-sm text-stone-500">{acc.url}</p>
@@ -805,14 +815,14 @@ export default function App() {
             <h3 className="text-lg font-semibold text-stone-700 pt-2">Subscriptions</h3>
             <div className="grid gap-4">
               {subscriptions.length === 0 ? (
-                <div className="bg-white p-6 rounded-2xl border border-stone-200 text-sm text-stone-500">
+                <div className="rm-card bg-white p-6 rounded-2xl border border-stone-200 text-sm text-stone-500">
                   No subscriptions yet.
                 </div>
               ) : (
                 subscriptions.map(sub => {
                   const syncStatus = subscriptionFetchStatus[sub.id];
                   return (
-                  <div key={sub.id} className="bg-white p-6 rounded-2xl border border-stone-200 shadow-sm flex justify-between items-center">
+                  <div key={sub.id} className="rm-card bg-white p-6 rounded-2xl border border-stone-200 shadow-sm flex justify-between items-center">
                     <div>
                       <h3 className="font-bold">{sub.name}</h3>
                       <p className="text-sm text-stone-500">Updates every {sub.update_frequency_minutes} minutes</p>
