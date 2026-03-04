@@ -22,13 +22,21 @@ type FetchWindow = {
 export class SubscriptionService {
   private readonly minFrequencyMinutes = 15;
 
-  private isCancelled(componentLike: ICAL.Component | ICAL.Event | null | undefined): boolean {
-    const component =
-      componentLike instanceof ICAL.Event
-        ? componentLike.component
-        : componentLike;
+  private toComponent(componentLike: ICAL.Component | ICAL.Event | null | undefined): ICAL.Component | null {
+    if (!componentLike) return null;
+    return componentLike instanceof ICAL.Event ? componentLike.component : componentLike;
+  }
 
-    const status = (component?.getFirstPropertyValue('status') as string | null)?.toUpperCase();
+  private getFirstPropertyValue(
+    componentLike: ICAL.Component | ICAL.Event | null | undefined,
+    propertyName: string,
+  ): string | null {
+    const component = this.toComponent(componentLike);
+    return (component?.getFirstPropertyValue(propertyName) as string | null) ?? null;
+  }
+
+  private isCancelled(componentLike: ICAL.Component | ICAL.Event | null | undefined): boolean {
+    const status = this.getFirstPropertyValue(componentLike, 'status')?.toUpperCase();
     return status === 'CANCELLED';
   }
 
@@ -243,9 +251,9 @@ export class SubscriptionService {
               const item = details.item;
               if (this.isCancelled(item)) continue;
 
-              const summary = (item.getFirstPropertyValue('summary') as string | null) || summaryFallback;
-              const location = (item.getFirstPropertyValue('location') as string | null) || locationFallback;
-              const description = (item.getFirstPropertyValue('description') as string | null) || descriptionFallback;
+              const summary = this.getFirstPropertyValue(item, 'summary') || summaryFallback;
+              const location = this.getFirstPropertyValue(item, 'location') || locationFallback;
+              const description = this.getFirstPropertyValue(item, 'description') || descriptionFallback;
               const timezone = details.startDate.zone?.tzid || null;
               const recurrenceId = details.recurrenceId ? details.recurrenceId.toString() : details.startDate.toString();
 
