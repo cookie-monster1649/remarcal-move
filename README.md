@@ -42,6 +42,7 @@ A self-hosted, private tool to sync calendar data (CalDAV + ICS subscriptions) t
    PORT=3000
    DATA_DIR=/data
    APP_SECURE_COOKIES=false
+   CALENDAR_TRACE=0
    CALDAV_HOSTNAME=nas.local
    CALDAV_HOST_IP=192.168.1.10
    ```
@@ -49,6 +50,7 @@ A self-hosted, private tool to sync calendar data (CalDAV + ICS subscriptions) t
    **Important**:
    - `APP_MASTER_KEY` is required and must be at least 32 characters.
    - `APP_ADMIN_PASSWORD` is required; app refuses startup without it.
+   - Ensure these values are in `.env` (not just `.env.example`).
    - Keep `APP_SECURE_COOKIES=false` when accessing over HTTP on LAN. Set `true` only behind HTTPS.
    - If your CalDAV host requires static DNS override inside container, set `CALDAV_HOSTNAME` + `CALDAV_HOST_IP`.
    - Compose now supports overriding runtime and host mapping via env vars (works well with Portainer stack env settings).
