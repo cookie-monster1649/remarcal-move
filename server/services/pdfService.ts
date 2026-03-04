@@ -141,8 +141,7 @@ export class PDFService {
 
     const isAllDayEvent = (e: CalendarEvent) => {
       const duration = e.end.getTime() - e.start.getTime();
-      const isMidnight = parseInt(formatInTimeZone(e.start, tz, 'H')) === 0 && parseInt(formatInTimeZone(e.start, tz, 'm')) === 0;
-      return !!e.allDay || duration >= 86400000 || isMidnight;
+      return !!e.allDay || duration >= 86400000;
     };
 
     const doc = new jsPDF({
@@ -730,10 +729,11 @@ export class PDFService {
             const startStr = getTzDateStr(e.start);
             const endStr = getTzDateStr(e.end);
             
-            // An event is "All Day" if it's marked as such, or spans >= 24h, or starts at midnight
+            // An event is "All Day" if it's explicitly all-day, or spans >= 24h.
+            // Do not infer all-day from "starts at midnight" because valid timed
+            // events can occur at 00:00 in target timezone.
             const duration = e.end.getTime() - e.start.getTime();
-            const isMidnight = parseInt(formatInTimeZone(e.start, tz, 'H')) === 0 && parseInt(formatInTimeZone(e.start, tz, 'm')) === 0;
-            const isAllDayType = e.allDay || duration >= 86400000 || isMidnight;
+            const isAllDayType = !!e.allDay || duration >= 86400000;
             
             if (!isAllDayType) return false;
             
@@ -789,13 +789,11 @@ export class PDFService {
         
         const dayEvents = renderEvents.filter(e => {
             const startStr = getTzDateStr(e.start);
-            const endStr = getTzDateStr(e.end);
             
             const duration = e.end.getTime() - e.start.getTime();
-            const isMidnight = parseInt(formatInTimeZone(e.start, tz, 'H')) === 0 && parseInt(formatInTimeZone(e.start, tz, 'm')) === 0;
             
             // If it's an all-day event, it's already handled in the top section
-            if (e.allDay || duration >= 86400000 || isMidnight) return false;
+            if (e.allDay || duration >= 86400000) return false;
             
             // For regular events, they only appear on their start day in the schedule
             return startStr === currentDayStr;
@@ -876,39 +874,19 @@ export class PDFService {
             
             const totalCols = columns.length;
             const scheduleW = leftColW - 15;
+            const columnGap = 0.8;
             const colW = scheduleW / totalCols;
-            const scheduleRightEdge = 5 + leftColW;
             
             cluster.forEach(item => {
                 const y = mainContentY + (item.start - startHour) * hourH;
                 const h = (item.end - item.start) * hourH;
                 const x = 15 + (item.colIndex * colW);
-                
-                const rectW = scheduleRightEdge - x;
+                const rectW = Math.max(6, colW - columnGap);
                 
                 doc.setFillColor(245, 245, 245);
                 doc.setDrawColor(100);
                 doc.setLineWidth(0.1);
                 doc.roundedRect(x, y, rectW, h, 1, 1, 'FD');
-                
-                let visibleW = rectW;
-                
-                if (item.colIndex < totalCols - 1) {
-                    let nextColStart = item.end;
-                    
-                    const overlappingItems = cluster.filter(ci => 
-                        ci.colIndex > item.colIndex && 
-                        ci.start < item.end && 
-                        ci.end > item.start
-                    );
-                    
-                    if (overlappingItems.length > 0) {
-                        const earliestOverlap = Math.min(...overlappingItems.map(ci => ci.start));
-                        if (earliestOverlap < item.start + 0.5) {
-                             visibleW = colW;
-                        }
-                    }
-                }
 
                 doc.setTextColor(0);
                 
@@ -922,7 +900,7 @@ export class PDFService {
                 const iconSize = 2; 
                 const iconPadding = 1;
                 
-                const availableWidth = visibleW - 4 - (hasLocation ? iconSize + iconPadding : 0);
+                const availableWidth = rectW - 4 - (hasLocation ? iconSize + iconPadding : 0);
                 
                 let textLines: string[] = [];
                 const summary = item.event.summary;
@@ -966,7 +944,7 @@ export class PDFService {
                 if (hasLocation) {
                     locationsForNotes.push({ summary: item.event.summary, location: item.event.location! });
                     
-                    const iconX = x + visibleW - 2 - iconSize;
+                    const iconX = x + rectW - 2 - iconSize;
                     
                     let iconY = y + 1.5;
                     if (isShortEvent) {
