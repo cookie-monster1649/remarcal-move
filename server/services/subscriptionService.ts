@@ -14,8 +14,46 @@ type SubscriptionRow = {
   last_body_hash: string | null;
 };
 
+type FetchWindow = {
+  rangeStart?: Date;
+  rangeEnd?: Date;
+};
+
 export class SubscriptionService {
   private readonly minFrequencyMinutes = 15;
+
+  private linkedDocumentsWindow(subscriptionId: string): { start: Date; end: Date } | null {
+    const row = db.prepare(`
+      SELECT MIN(d.year) AS min_year, MAX(d.year) AS max_year
+      FROM documents d
+      JOIN document_subscriptions ds ON d.id = ds.document_id
+      WHERE ds.subscription_id = ?
+    `).get(subscriptionId) as { min_year: number | null; max_year: number | null } | undefined;
+
+    const minYear = row?.min_year;
+    const maxYear = row?.max_year;
+    if (!minYear || !maxYear) return null;
+
+    return {
+      start: new Date(Date.UTC(minYear, 0, 1, 0, 0, 0, 0)),
+      end: new Date(Date.UTC(maxYear, 11, 31, 23, 59, 59, 999)),
+    };
+  }
+
+  private defaultWindow(): { start: Date; end: Date } {
+    const now = new Date();
+    const start = new Date(Date.UTC(now.getUTCFullYear() - 1, 0, 1, 0, 0, 0, 0));
+    const end = new Date(Date.UTC(now.getUTCFullYear() + 2, 11, 31, 23, 59, 59, 999));
+    return { start, end };
+  }
+
+  private toIcalTime(date: Date): ICAL.Time {
+    return ICAL.Time.fromJSDate(date, true);
+  }
+
+  private overlaps(start: Date, end: Date, rangeStart: Date, rangeEnd: Date): boolean {
+    return end.getTime() >= rangeStart.getTime() && start.getTime() <= rangeEnd.getTime();
+  }
 
   private bodyHash(body: string): string {
     return crypto.createHash('sha256').update(body).digest('hex');
@@ -29,7 +67,7 @@ export class SubscriptionService {
     return Date.now() - lastFetched >= frequency * 60 * 1000;
   }
 
-  async fetchSubscription(subscriptionId: string): Promise<void> {
+  async fetchSubscription(subscriptionId: string, window: FetchWindow = {}): Promise<void> {
     const sub = db
       .prepare('SELECT id, encrypted_url, update_frequency_minutes, enabled, last_etag, last_modified, last_body_hash FROM calendar_subscriptions WHERE id = ?')
       .get(subscriptionId) as SubscriptionRow | undefined;
@@ -46,6 +84,11 @@ export class SubscriptionService {
     if (sub.last_modified) headers['If-Modified-Since'] = sub.last_modified;
 
     const nowIso = new Date().toISOString();
+
+    const linkedWindow = this.linkedDocumentsWindow(subscriptionId);
+    const defaultWindow = this.defaultWindow();
+    const rangeStart = window.rangeStart ?? linkedWindow?.start ?? defaultWindow.start;
+    const rangeEnd = window.rangeEnd ?? linkedWindow?.end ?? defaultWindow.end;
 
     try {
       const response = await axios.get(url, {
@@ -91,6 +134,7 @@ export class SubscriptionService {
       const parsed = ICAL.parse(body);
       const vcal = new ICAL.Component(parsed);
       const vevents = vcal.getAllSubcomponents('vevent');
+      const baseEvents = vevents.filter((c) => !c.getFirstPropertyValue('recurrence-id'));
       const seenAt = new Date().toISOString();
 
       const upsert = db.prepare(`
@@ -110,29 +154,67 @@ export class SubscriptionService {
       `);
 
       const applySnapshot = db.transaction(() => {
-        for (const vevent of vevents) {
+        for (const vevent of baseEvents) {
           const uid = vevent.getFirstPropertyValue('uid') as string | null;
-          const dtStart = vevent.getFirstPropertyValue('dtstart') as ICAL.Time | null;
-          const dtEnd = vevent.getFirstPropertyValue('dtend') as ICAL.Time | null;
-          if (!uid || !dtStart || !dtEnd) continue;
+          if (!uid) continue;
 
-          const recurrenceId = (vevent.getFirstPropertyValue('recurrence-id') as ICAL.Time | null)?.toString() || '';
-          const summary = (vevent.getFirstPropertyValue('summary') as string | null) || '';
-          const location = (vevent.getFirstPropertyValue('location') as string | null) || null;
-          const description = (vevent.getFirstPropertyValue('description') as string | null) || null;
-          const timezone = dtStart.zone?.tzid || null;
+          const event = new ICAL.Event(vevent);
+          const summaryFallback = (vevent.getFirstPropertyValue('summary') as string | null) || '';
+          const locationFallback = (vevent.getFirstPropertyValue('location') as string | null) || null;
+          const descriptionFallback = (vevent.getFirstPropertyValue('description') as string | null) || null;
+
+          if (event.isRecurring()) {
+            const iterator = event.iterator(this.toIcalTime(rangeStart));
+
+            while (true) {
+              const next = iterator.next();
+              if (!next) break;
+
+              const details = event.getOccurrenceDetails(next);
+              const startDate = details.startDate.toJSDate();
+              const endDate = details.endDate.toJSDate();
+              if (startDate.getTime() > rangeEnd.getTime()) break;
+              if (!this.overlaps(startDate, endDate, rangeStart, rangeEnd)) continue;
+
+              const item = details.item;
+              const summary = (item.getFirstPropertyValue('summary') as string | null) || summaryFallback;
+              const location = (item.getFirstPropertyValue('location') as string | null) || locationFallback;
+              const description = (item.getFirstPropertyValue('description') as string | null) || descriptionFallback;
+              const timezone = details.startDate.zone?.tzid || null;
+              const recurrenceId = details.recurrenceId ? details.recurrenceId.toString() : details.startDate.toString();
+
+              upsert.run(
+                subscriptionId,
+                uid,
+                recurrenceId,
+                summary,
+                startDate.toISOString(),
+                endDate.toISOString(),
+                location,
+                description,
+                details.startDate.isDate ? 1 : 0,
+                timezone,
+                seenAt,
+              );
+            }
+            continue;
+          }
+
+          const startDate = event.startDate.toJSDate();
+          const endDate = event.endDate.toJSDate();
+          if (!this.overlaps(startDate, endDate, rangeStart, rangeEnd)) continue;
 
           upsert.run(
             subscriptionId,
             uid,
-            recurrenceId,
-            summary,
-            dtStart.toJSDate().toISOString(),
-            dtEnd.toJSDate().toISOString(),
-            location,
-            description,
-            dtStart.isDate ? 1 : 0,
-            timezone,
+            '',
+            summaryFallback,
+            startDate.toISOString(),
+            endDate.toISOString(),
+            locationFallback,
+            descriptionFallback,
+            event.startDate.isDate ? 1 : 0,
+            event.startDate.zone?.tzid || null,
             seenAt,
           );
         }
