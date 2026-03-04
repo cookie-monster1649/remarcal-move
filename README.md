@@ -115,5 +115,20 @@ To run locally without Docker:
 
 1. Install dependencies: `npm install`
 2. Set env vars (see `.env.example`).
-3. Run: `npm run dev` (Frontend) and `tsx server.ts` (Backend).
+3. Run: `npm run dev` (Frontend) and `npm run dev:server` (Backend).
    *Note: The provided setup is optimized for Docker.*
+
+### Calendar trace debugging (optional)
+
+If subscription/PDF times look wrong, enable verbose tracing in the backend:
+
+1. Set env vars (example):
+   - `CALENDAR_TRACE=1`
+   - `APP_ADMIN_PASSWORD=...`
+   - `APP_MASTER_KEY=...`
+2. Start backend with `npm run dev:server`.
+3. Trigger document sync/PDF generation and inspect `[calendar-trace] ...` lines in backend logs.
+
+Notes:
+- `npm run dev` starts only frontend Vite, so trace logs will not appear there.
+- Truthy values for `CALENDAR_TRACE`: `1`, `true`, `yes`, `on`.

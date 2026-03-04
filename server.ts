@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import express from 'express';
 import { createServer as createViteServer } from 'vite';
 import cors from 'cors';
@@ -13,6 +14,9 @@ import { requireAuth } from './server/services/authService.js';
 import { createRateLimiter, requestTimeout } from './server/middleware/security.js';
 
 async function startServer() {
+  const traceCalendar = ['1', 'true', 'yes', 'on'].includes(String(process.env.CALENDAR_TRACE || '').toLowerCase());
+  console.log(`[calendar-trace] ${traceCalendar ? 'enabled' : 'disabled'} (CALENDAR_TRACE=${process.env.CALENDAR_TRACE || 'unset'})`);
+
   if (process.env.NODE_TLS_REJECT_UNAUTHORIZED === '0') {
     console.error('Refusing to start: NODE_TLS_REJECT_UNAUTHORIZED=0 disables TLS certificate validation.');
     process.exit(1);
