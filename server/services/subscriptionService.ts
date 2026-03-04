@@ -131,22 +131,33 @@ export class SubscriptionService {
       return new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0));
     }
 
-    // First try ical.js native conversion.
-    const native = time.toJSDate();
-    if (Number.isFinite(native.getTime())) {
-      return native;
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const localIso = `${String(year).padStart(4, '0')}-${pad(month)}-${pad(day)}T${pad(hour)}:${pad(minute)}:${pad(second)}`;
+
+    // Floating values should preserve wall-clock fields (no zone conversion).
+    if (tzid === 'floating') {
+      return new Date(Date.UTC(year, month - 1, day, hour, minute, second, 0));
     }
 
-    // Fallback for feeds with custom/non-standard TZIDs where native conversion can fail.
-    if (tzid && tzid !== 'floating') {
+    // Explicit UTC values map directly from wall-clock fields to UTC.
+    if (tzid === 'UTC') {
+      return new Date(Date.UTC(year, month - 1, day, hour, minute, second, 0));
+    }
+
+    // TZID-based values: interpret the local wall-clock in that timezone.
+    if (tzid) {
       try {
-        const pad = (n: number) => String(n).padStart(2, '0');
-        const localIso = `${String(year).padStart(4, '0')}-${pad(month)}-${pad(day)}T${pad(hour)}:${pad(minute)}:${pad(second)}`;
         const converted = fromZonedTime(localIso, tzid);
         if (Number.isFinite(converted.getTime())) return converted;
       } catch {
-        // Ignore and continue to stable UTC-field fallback below.
+        // Ignore and continue to native / stable UTC-field fallback below.
       }
+    }
+
+    // Fallback to ical.js conversion for unusual zone representations.
+    const native = time.toJSDate();
+    if (Number.isFinite(native.getTime())) {
+      return native;
     }
 
     // Final fallback: preserve wall-clock fields to avoid collapsing timed events to one slot.
