@@ -199,7 +199,8 @@ export class SubscriptionService {
         if (event.isRecurrenceException()) {
           const base = eventsByUid.get(uid);
           if (base) {
-            base.relateException(event);
+            // ical.js expects a VEVENT component here, not an ICAL.Event wrapper.
+            base.relateException(event.component);
           } else {
             const list = pendingExceptions.get(uid) || [];
             list.push(event);
@@ -211,7 +212,7 @@ export class SubscriptionService {
         eventsByUid.set(uid, event);
         const queued = pendingExceptions.get(uid);
         if (queued && queued.length) {
-          queued.forEach((ex) => event.relateException(ex));
+          queued.forEach((ex) => event.relateException(ex.component));
           pendingExceptions.delete(uid);
         }
       }
