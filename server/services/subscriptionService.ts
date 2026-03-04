@@ -1,6 +1,7 @@
 import axios from 'axios';
 import crypto from 'crypto';
 import ICAL from 'ical.js';
+import { fromZonedTime } from 'date-fns-tz';
 import db from '../db.js';
 import { decrypt } from './encryptionService.js';
 
@@ -90,6 +91,66 @@ export class SubscriptionService {
     const startMs = start.getTime();
     const endMs = end.getTime();
     return Number.isFinite(startMs) && Number.isFinite(endMs) && endMs >= startMs;
+  }
+
+  private normalizeTimezoneId(tzid: string | null | undefined): string | null {
+    if (!tzid) return null;
+    const raw = String(tzid).trim();
+    if (!raw) return null;
+
+    if (raw.toUpperCase() === 'UTC' || raw.toUpperCase() === 'Z') return 'UTC';
+
+    const withoutPrefix = raw.replace(/^UTC/i, '').replace(/^GMT/i, '').trim();
+    const offsetMatch = withoutPrefix.match(/^([+-]?)(\d{1,2})(?::?(\d{2}))?$/);
+    if (offsetMatch) {
+      const sign = offsetMatch[1] || '+';
+      const hh = offsetMatch[2].padStart(2, '0');
+      const mm = (offsetMatch[3] || '00').padStart(2, '0');
+      return `${sign}${hh}:${mm}`;
+    }
+
+    return raw;
+  }
+
+  private toEventDate(time: ICAL.Time | null | undefined): Date | null {
+    if (!time) return null;
+
+    const year = Number((time as any).year);
+    const month = Number((time as any).month);
+    const day = Number((time as any).day);
+    const hour = Number((time as any).hour || 0);
+    const minute = Number((time as any).minute || 0);
+    const second = Number((time as any).second || 0);
+
+    if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) return null;
+
+    const tzid = this.normalizeTimezoneId((time as any).zone?.tzid || null);
+
+    // For date-only values, persist as UTC midnight on that date.
+    if (time.isDate) {
+      return new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0));
+    }
+
+    // First try ical.js native conversion.
+    const native = time.toJSDate();
+    if (Number.isFinite(native.getTime())) {
+      return native;
+    }
+
+    // Fallback for feeds with custom/non-standard TZIDs where native conversion can fail.
+    if (tzid && tzid !== 'floating') {
+      try {
+        const pad = (n: number) => String(n).padStart(2, '0');
+        const localIso = `${String(year).padStart(4, '0')}-${pad(month)}-${pad(day)}T${pad(hour)}:${pad(minute)}:${pad(second)}`;
+        const converted = fromZonedTime(localIso, tzid);
+        if (Number.isFinite(converted.getTime())) return converted;
+      } catch {
+        // Ignore and continue to stable UTC-field fallback below.
+      }
+    }
+
+    // Final fallback: preserve wall-clock fields to avoid collapsing timed events to one slot.
+    return new Date(Date.UTC(year, month - 1, day, hour, minute, second, 0));
   }
 
   private recurrenceKey(details: ICAL.EventOccurrenceDetails): string {
@@ -279,8 +340,9 @@ export class SubscriptionService {
               if (!next) break;
 
               const details = event.getOccurrenceDetails(next);
-              const startDate = details.startDate.toJSDate();
-              const endDate = details.endDate.toJSDate();
+              const startDate = this.toEventDate(details.startDate);
+              const endDate = this.toEventDate(details.endDate);
+              if (!startDate || !endDate) continue;
               if (!this.validDateRange(startDate, endDate)) continue;
               if (startDate.getTime() > rangeEnd.getTime()) break;
               if (!this.overlaps(startDate, endDate, rangeStart, rangeEnd)) continue;
@@ -291,7 +353,7 @@ export class SubscriptionService {
               const summary = this.getFirstPropertyValue(item, 'summary') || summaryFallback;
               const location = this.getFirstPropertyValue(item, 'location') || locationFallback;
               const description = this.getFirstPropertyValue(item, 'description') || descriptionFallback;
-              const timezone = details.startDate.zone?.tzid || event.startDate.zone?.tzid || null;
+              const timezone = this.normalizeTimezoneId(details.startDate.zone?.tzid || event.startDate.zone?.tzid || null);
               const recurrenceId = this.recurrenceKey(details);
 
               upsert.run(
@@ -311,8 +373,9 @@ export class SubscriptionService {
             continue;
           }
 
-          const startDate = event.startDate.toJSDate();
-          const endDate = event.endDate.toJSDate();
+          const startDate = this.toEventDate(event.startDate);
+          const endDate = this.toEventDate(event.endDate);
+          if (!startDate || !endDate) continue;
           if (!this.validDateRange(startDate, endDate)) continue;
           if (!this.overlaps(startDate, endDate, rangeStart, rangeEnd)) continue;
 
@@ -326,7 +389,7 @@ export class SubscriptionService {
             locationFallback,
             descriptionFallback,
             event.startDate.isDate ? 1 : 0,
-            event.startDate.zone?.tzid || null,
+            this.normalizeTimezoneId(event.startDate.zone?.tzid || null),
             seenAt,
           );
         }
