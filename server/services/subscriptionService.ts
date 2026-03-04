@@ -22,6 +22,11 @@ type FetchWindow = {
 export class SubscriptionService {
   private readonly minFrequencyMinutes = 15;
 
+  private isCancelled(component: ICAL.Component): boolean {
+    const status = (component.getFirstPropertyValue('status') as string | null)?.toUpperCase();
+    return status === 'CANCELLED';
+  }
+
   private linkedDocumentsWindow(subscriptionId: string): { start: Date; end: Date } | null {
     const row = db.prepare(`
       SELECT MIN(d.year) AS min_year, MAX(d.year) AS max_year
@@ -85,6 +90,7 @@ export class SubscriptionService {
 
     const nowIso = new Date().toISOString();
 
+    const explicitWindow = !!window.rangeStart || !!window.rangeEnd;
     const linkedWindow = this.linkedDocumentsWindow(subscriptionId);
     const defaultWindow = this.defaultWindow();
     const rangeStart = window.rangeStart ?? linkedWindow?.start ?? defaultWindow.start;
@@ -134,7 +140,35 @@ export class SubscriptionService {
       const parsed = ICAL.parse(body);
       const vcal = new ICAL.Component(parsed);
       const vevents = vcal.getAllSubcomponents('vevent');
-      const baseEvents = vevents.filter((c) => !c.getFirstPropertyValue('recurrence-id'));
+
+      // Build complete events with linked recurrence exceptions.
+      const eventsByUid = new Map<string, ICAL.Event>();
+      const pendingExceptions = new Map<string, ICAL.Event[]>();
+      for (const vevent of vevents) {
+        const uid = vevent.getFirstPropertyValue('uid') as string | null;
+        if (!uid) continue;
+        const event = new ICAL.Event(vevent);
+
+        if (event.isRecurrenceException()) {
+          const base = eventsByUid.get(uid);
+          if (base) {
+            base.relateException(event);
+          } else {
+            const list = pendingExceptions.get(uid) || [];
+            list.push(event);
+            pendingExceptions.set(uid, list);
+          }
+          continue;
+        }
+
+        eventsByUid.set(uid, event);
+        const queued = pendingExceptions.get(uid);
+        if (queued && queued.length) {
+          queued.forEach((ex) => event.relateException(ex));
+          pendingExceptions.delete(uid);
+        }
+      }
+
       const seenAt = new Date().toISOString();
 
       const upsert = db.prepare(`
@@ -154,11 +188,13 @@ export class SubscriptionService {
       `);
 
       const applySnapshot = db.transaction(() => {
-        for (const vevent of baseEvents) {
+        for (const event of eventsByUid.values()) {
+          const vevent = event.component;
+          if (this.isCancelled(vevent)) continue;
+
           const uid = vevent.getFirstPropertyValue('uid') as string | null;
           if (!uid) continue;
 
-          const event = new ICAL.Event(vevent);
           const summaryFallback = (vevent.getFirstPropertyValue('summary') as string | null) || '';
           const locationFallback = (vevent.getFirstPropertyValue('location') as string | null) || null;
           const descriptionFallback = (vevent.getFirstPropertyValue('description') as string | null) || null;
@@ -177,6 +213,8 @@ export class SubscriptionService {
               if (!this.overlaps(startDate, endDate, rangeStart, rangeEnd)) continue;
 
               const item = details.item;
+              if (this.isCancelled(item)) continue;
+
               const summary = (item.getFirstPropertyValue('summary') as string | null) || summaryFallback;
               const location = (item.getFirstPropertyValue('location') as string | null) || locationFallback;
               const description = (item.getFirstPropertyValue('description') as string | null) || descriptionFallback;
@@ -220,7 +258,18 @@ export class SubscriptionService {
         }
 
         // Authoritative snapshot: delete rows not seen in this fetch.
-        db.prepare('DELETE FROM subscription_events WHERE subscription_id = ? AND last_seen_at <> ?').run(subscriptionId, seenAt);
+        // If a specific window was requested (e.g. document year), only prune rows in that same window.
+        if (explicitWindow) {
+          db.prepare(`
+            DELETE FROM subscription_events
+            WHERE subscription_id = ?
+              AND last_seen_at <> ?
+              AND end_at >= ?
+              AND start_at <= ?
+          `).run(subscriptionId, seenAt, rangeStart.toISOString(), rangeEnd.toISOString());
+        } else {
+          db.prepare('DELETE FROM subscription_events WHERE subscription_id = ? AND last_seen_at <> ?').run(subscriptionId, seenAt);
+        }
       });
 
       applySnapshot();

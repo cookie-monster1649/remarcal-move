@@ -95,7 +95,10 @@ export class SyncService {
 
     for (const subscription of linkedSubscriptions) {
       try {
-        await subscriptionService.fetchSubscription(subscription.id);
+        await subscriptionService.fetchSubscription(subscription.id, {
+          rangeStart: new Date(`${startDate}T00:00:00.000Z`),
+          rangeEnd: new Date(`${endDate}T23:59:59.999Z`),
+        });
       } catch (err: any) {
         console.warn(`Failed refreshing subscription ${subscription.id}: ${err.message}`);
       }
