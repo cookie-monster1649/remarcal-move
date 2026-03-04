@@ -471,7 +471,7 @@ export default function App() {
           <form onSubmit={handleLogin} className="bg-white border border-stone-200 rounded-2xl shadow-sm p-8 w-full max-w-sm space-y-4">
             <div className="flex items-center gap-2">
               <Shield size={18} />
-              <h1 className="text-lg font-semibold">Remarcal Login</h1>
+              <h1 className="text-lg font-semibold">remarcal-move Login</h1>
             </div>
             {authError && <div className="text-sm text-red-600 bg-red-50 border border-red-100 rounded p-2">{authError}</div>}
             <div>
@@ -497,7 +497,7 @@ export default function App() {
             <div className="rm-brand-mark w-8 h-8 bg-stone-900 text-white flex items-center justify-center rounded-lg">
               <Calendar size={20} />
             </div>
-            <h1 className="rm-brand-title text-xl font-bold tracking-tight">Remarcal</h1>
+            <h1 className="rm-brand-title text-xl font-bold tracking-tight">remarcal-move</h1>
             
             {/* Device Status Indicator (Summary) */}
             {devices.length > 0 && (
