@@ -536,6 +536,50 @@ export class PDFService {
              ];
              
              const dayMeta: Array<{ index: number; x: number; y: number; w: number; h: number; date: Date }> = [];
+             const rowGroups = [[0, 1, 2], [3, 4], [5, 6]];
+             type WeekSpanSegment = { startIdx: number; endIdx: number; title: string; titleOnStart: boolean; lane: number };
+             const weekSpanByRow: Record<number, WeekSpanSegment[]> = { 0: [], 1: [], 2: [] };
+
+             const weekStartStr = getTzDateStr(wStart);
+             const weekEndNextStr = addDayStr(getTzDateStr(wEnd), 1);
+             rowGroups.forEach((group, groupIndex) => {
+               const rowStartIdx = group[0];
+               const rowEndIdx = group[group.length - 1];
+               const rowStartStr = getTzDateStr(weekDays[rowStartIdx]);
+               const rowEndNextStr = addDayStr(getTzDateStr(weekDays[rowEndIdx]), 1);
+               const segments = renderEvents
+                 .filter(e => isAllDayEvent(e))
+                 .map(e => {
+                   const startStr = getTzDateStr(e.start);
+                   const endStr = getTzDateStr(e.end);
+                   if (dayDiff(endStr, startStr) <= 1) return null;
+                   const clippedStart = startStr > weekStartStr ? startStr : weekStartStr;
+                   const clippedEnd = endStr < weekEndNextStr ? endStr : weekEndNextStr;
+                   if (!(clippedStart < clippedEnd)) return null;
+                   const segStart = clippedStart > rowStartStr ? clippedStart : rowStartStr;
+                   const segEnd = clippedEnd < rowEndNextStr ? clippedEnd : rowEndNextStr;
+                   if (!(segStart < segEnd)) return null;
+                   const startIdx = dayDiff(segStart, weekStartStr);
+                   const endIdx = dayDiff(segEnd, weekStartStr) - 1;
+                   return {
+                     startIdx,
+                     endIdx,
+                     title: e.summary,
+                     titleOnStart: segStart === startStr,
+                   };
+                 })
+                 .filter(Boolean) as Array<{ startIdx: number; endIdx: number; title: string; titleOnStart: boolean }>;
+
+               const lanes: number[] = [];
+               segments.sort((a, b) => a.startIdx - b.startIdx || a.endIdx - b.endIdx).forEach(seg => {
+                 let lane = 0;
+                 while (lane < lanes.length && seg.startIdx <= lanes[lane]) lane++;
+                 if (lane === lanes.length) lanes.push(-1);
+                 lanes[lane] = seg.endIdx;
+                 weekSpanByRow[groupIndex].push({ ...seg, lane });
+               });
+             });
+
              weekDays.forEach((d, i) => {
                  const pos = gridMap[i];
                  const x = gridX + pos.c*cellW;
@@ -577,7 +621,9 @@ export class PDFService {
                  });
                  const allDayEvents = dayEvents.filter(e => isAllDayEvent(e));
                  const timedEvents = dayEvents.filter(e => !isAllDayEvent(e));
-                 let eventY = y + 10;
+                 const rowIndex = pos.r;
+                 const spanLanes = weekSpanByRow[rowIndex].length > 0 ? (Math.max(...weekSpanByRow[rowIndex].map(s => s.lane)) + 1) : 0;
+                 let eventY = y + 10 + spanLanes * 4;
                  doc.setFontSize(6);
                  doc.setFont("helvetica", "normal");
                  doc.setTextColor(0);
@@ -599,51 +645,14 @@ export class PDFService {
                      }
                  });
              });
-
-             const rowGroups = [[0, 1, 2], [3, 4], [5, 6]];
-             const weekStartStr = getTzDateStr(wStart);
-             const weekEndNextStr = addDayStr(getTzDateStr(wEnd), 1);
              rowGroups.forEach((group, groupIndex) => {
-               const rowStartIdx = group[0];
-               const rowEndIdx = group[group.length - 1];
-               const rowStartStr = getTzDateStr(weekDays[rowStartIdx]);
-               const rowEndNextStr = addDayStr(getTzDateStr(weekDays[rowEndIdx]), 1);
-               const segments = renderEvents
-                 .filter(e => isAllDayEvent(e))
-                 .map(e => {
-                   const startStr = getTzDateStr(e.start);
-                   const endStr = getTzDateStr(e.end);
-                   if (dayDiff(endStr, startStr) <= 1) return null;
-                   const clippedStart = startStr > weekStartStr ? startStr : weekStartStr;
-                   const clippedEnd = endStr < weekEndNextStr ? endStr : weekEndNextStr;
-                   if (!(clippedStart < clippedEnd)) return null;
-                   const segStart = clippedStart > rowStartStr ? clippedStart : rowStartStr;
-                   const segEnd = clippedEnd < rowEndNextStr ? clippedEnd : rowEndNextStr;
-                   if (!(segStart < segEnd)) return null;
-                   const startIdx = dayDiff(segStart, weekStartStr);
-                   const endIdx = dayDiff(segEnd, weekStartStr) - 1;
-                   return {
-                     startIdx,
-                     endIdx,
-                     title: e.summary,
-                     titleOnStart: segStart === startStr,
-                   };
-                 })
-                 .filter(Boolean) as Array<{ startIdx: number; endIdx: number; title: string; titleOnStart: boolean }>;
-
-               const lanes: number[] = [];
-               segments.sort((a, b) => a.startIdx - b.startIdx || a.endIdx - b.endIdx).forEach(seg => {
-                 let lane = 0;
-                 while (lane < lanes.length && seg.startIdx <= lanes[lane]) lane++;
-                 if (lane === lanes.length) lanes.push(-1);
-                 lanes[lane] = seg.endIdx;
-
+               weekSpanByRow[groupIndex].forEach(seg => {
                  const startCell = dayMeta[seg.startIdx];
                  const endCell = dayMeta[seg.endIdx];
                  if (!startCell || !endCell) return;
                  const sx = startCell.x + 2;
                  const ex = endCell.x + endCell.w - 2;
-                 const sy = startCell.y + 10 + lane * 4;
+                 const sy = startCell.y + 10 + seg.lane * 4;
                  const sh = 3.2;
                  doc.setFillColor(245, 245, 245);
                  doc.setDrawColor(100);
