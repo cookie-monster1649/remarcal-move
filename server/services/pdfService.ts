@@ -9,6 +9,7 @@ export interface CalendarEvent {
   description?: string;
   location?: string;
   allDay?: boolean;
+  timezone?: string;
 }
 
 export interface PDFConfig {
@@ -18,24 +19,44 @@ export interface PDFConfig {
 
 export class PDFService {
   generate(events: CalendarEvent[], config: PDFConfig): Buffer {
-    let tz = config.timezone || 'UTC';
-    
-    // Normalize UTC offsets (e.g., UTC+11 -> +11:00)
-    if (tz.startsWith('UTC')) {
-        const offset = tz.substring(3).trim();
-        if (!offset) {
-            tz = 'UTC';
-        } else {
-            let normalized = offset;
-            if (!normalized.startsWith('+') && !normalized.startsWith('-')) {
-                normalized = '+' + normalized;
-            }
-            if (!normalized.includes(':')) {
-                normalized += ':00';
-            }
-            tz = normalized;
-        }
-    }
+    const normalizeTimezone = (input: string | undefined | null): string | null => {
+      const raw = (input || '').trim();
+      if (!raw) return null;
+
+      // Normalize common offset forms:
+      // UTC+11 -> +11:00, GMT-5 -> -05:00, +11 -> +11:00
+      const upper = raw.toUpperCase();
+      const stripPrefix = upper.startsWith('UTC')
+        ? raw.slice(3).trim()
+        : upper.startsWith('GMT')
+          ? raw.slice(3).trim()
+          : raw;
+
+      const offsetMatch = stripPrefix.match(/^([+-]?)(\d{1,2})(?::?(\d{2}))?$/);
+      if (offsetMatch) {
+        const sign = offsetMatch[1] || '+';
+        const hh = offsetMatch[2].padStart(2, '0');
+        const mm = (offsetMatch[3] || '00').padStart(2, '0');
+        return `${sign}${hh}:${mm}`;
+      }
+
+      return raw;
+    };
+
+    const isValidTimezone = (candidate: string): boolean => {
+      try {
+        // Intl throws for invalid IANA zones.
+        // Fixed offsets like +11:00 are accepted by date-fns-tz.
+        if (/^[+-]\d{2}:\d{2}$/.test(candidate) || candidate === 'UTC') return true;
+        new Intl.DateTimeFormat('en-US', { timeZone: candidate });
+        return true;
+      } catch {
+        return false;
+      }
+    };
+
+    const configuredTz = normalizeTimezone(config.timezone) || 'UTC';
+    const tz = isValidTimezone(configuredTz) ? configuredTz : 'UTC';
     
     // Helper to get date string in target timezone
     const getTzDateStr = (date: Date) => {
@@ -43,8 +64,9 @@ export class PDFService {
         try {
             return formatInTimeZone(date, tz, 'yyyy-MM-dd');
         } catch (e) {
-            console.error(`Error formatting date in timezone ${tz}:`, e);
-            return 'invalid-date';
+            // Graceful fallback to host-local formatting to avoid collapsing
+            // all timed events to the same slot when timezone parsing fails.
+            return format(date, 'yyyy-MM-dd');
         }
     };
     const getTzTimeStr = (date: Date) => {
@@ -52,7 +74,7 @@ export class PDFService {
         try {
             return formatInTimeZone(date, tz, 'HH:mm');
         } catch (e) {
-            return '00:00';
+            return format(date, 'HH:mm');
         }
     };
     const getTzHour = (date: Date) => {
@@ -62,7 +84,7 @@ export class PDFService {
             const m = parseInt(formatInTimeZone(date, tz, 'm'));
             return h + m / 60;
         } catch (e) {
-            return 0;
+            return date.getHours() + date.getMinutes() / 60;
         }
     };
 
