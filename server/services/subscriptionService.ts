@@ -22,6 +22,8 @@ type FetchWindow = {
 export class SubscriptionService {
   private readonly minFrequencyMinutes = 15;
 
+  private readonly maxOccurrenceIterations = 20000;
+
   private toComponent(componentLike: ICAL.Component | ICAL.Event | null | undefined): ICAL.Component | null {
     if (!componentLike) return null;
 
@@ -82,6 +84,17 @@ export class SubscriptionService {
 
   private overlaps(start: Date, end: Date, rangeStart: Date, rangeEnd: Date): boolean {
     return end.getTime() >= rangeStart.getTime() && start.getTime() <= rangeEnd.getTime();
+  }
+
+  private validDateRange(start: Date, end: Date): boolean {
+    const startMs = start.getTime();
+    const endMs = end.getTime();
+    return Number.isFinite(startMs) && Number.isFinite(endMs) && endMs >= startMs;
+  }
+
+  private recurrenceKey(details: ICAL.EventOccurrenceDetails): string {
+    if (details.recurrenceId) return details.recurrenceId.toString();
+    return details.startDate.toString();
   }
 
   private freeBusyPeriods(component: ICAL.Component): Array<{ start: Date; end: Date }> {
@@ -188,32 +201,39 @@ export class SubscriptionService {
       const vevents = vcal.getAllSubcomponents('vevent');
       const vfreebusy = vcal.getAllSubcomponents('vfreebusy');
 
-      // Build complete events with linked recurrence exceptions.
+      // Build complete event sets by UID and deterministically link exceptions.
       const eventsByUid = new Map<string, ICAL.Event>();
-      const pendingExceptions = new Map<string, ICAL.Event[]>();
+      const pendingExceptionsByUid = new Map<string, ICAL.Component[]>();
+
       for (const vevent of vevents) {
         const uid = vevent.getFirstPropertyValue('uid') as string | null;
         if (!uid) continue;
-        const event = new ICAL.Event(vevent);
 
-        if (event.isRecurrenceException()) {
+        let event: ICAL.Event;
+        try {
+          event = new ICAL.Event(vevent);
+        } catch {
+          continue;
+        }
+
+        const recurrenceId = vevent.getFirstPropertyValue('recurrence-id');
+        if (recurrenceId) {
           const base = eventsByUid.get(uid);
           if (base) {
-            // ical.js expects a VEVENT component here, not an ICAL.Event wrapper.
-            base.relateException(event.component);
+            base.relateException(vevent);
           } else {
-            const list = pendingExceptions.get(uid) || [];
-            list.push(event);
-            pendingExceptions.set(uid, list);
+            const list = pendingExceptionsByUid.get(uid) || [];
+            list.push(vevent);
+            pendingExceptionsByUid.set(uid, list);
           }
           continue;
         }
 
         eventsByUid.set(uid, event);
-        const queued = pendingExceptions.get(uid);
+        const queued = pendingExceptionsByUid.get(uid);
         if (queued && queued.length) {
-          queued.forEach((ex) => event.relateException(ex.component));
-          pendingExceptions.delete(uid);
+          queued.forEach((ex) => event.relateException(ex));
+          pendingExceptionsByUid.delete(uid);
         }
       }
 
@@ -249,14 +269,19 @@ export class SubscriptionService {
 
           if (event.isRecurring()) {
             const iterator = event.iterator(this.toIcalTime(rangeStart));
+            let guard = 0;
 
             while (true) {
+              guard++;
+              if (guard > this.maxOccurrenceIterations) break;
+
               const next = iterator.next();
               if (!next) break;
 
               const details = event.getOccurrenceDetails(next);
               const startDate = details.startDate.toJSDate();
               const endDate = details.endDate.toJSDate();
+              if (!this.validDateRange(startDate, endDate)) continue;
               if (startDate.getTime() > rangeEnd.getTime()) break;
               if (!this.overlaps(startDate, endDate, rangeStart, rangeEnd)) continue;
 
@@ -266,8 +291,8 @@ export class SubscriptionService {
               const summary = this.getFirstPropertyValue(item, 'summary') || summaryFallback;
               const location = this.getFirstPropertyValue(item, 'location') || locationFallback;
               const description = this.getFirstPropertyValue(item, 'description') || descriptionFallback;
-              const timezone = details.startDate.zone?.tzid || null;
-              const recurrenceId = details.recurrenceId ? details.recurrenceId.toString() : details.startDate.toString();
+              const timezone = details.startDate.zone?.tzid || event.startDate.zone?.tzid || null;
+              const recurrenceId = this.recurrenceKey(details);
 
               upsert.run(
                 subscriptionId,
@@ -288,6 +313,7 @@ export class SubscriptionService {
 
           const startDate = event.startDate.toJSDate();
           const endDate = event.endDate.toJSDate();
+          if (!this.validDateRange(startDate, endDate)) continue;
           if (!this.overlaps(startDate, endDate, rangeStart, rangeEnd)) continue;
 
           upsert.run(
