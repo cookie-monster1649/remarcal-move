@@ -1,70 +1,73 @@
 @import "tailwindcss";
 
-/* reMarkable-inspired subtle monochrome facelift */
+/* reMarkable-inspired monochrome facelift (cleaner, brighter palette) */
 .remarkable-ui {
-  background: #ecece8;
-  color: #1a1a1a;
+  background: #f1f1ed;
+  color: #151515;
 }
 
 .remarkable-ui .remarkable-header {
-  background: #f4f4f1;
-  border-bottom-color: #d4d4cf;
+  background: #fafaf7;
+  border-bottom-color: #d7d7d1;
+  box-shadow: none;
 }
 
 .remarkable-ui .rm-brand-mark {
-  background: #f4f4f1;
-  color: #1f1f1f;
-  border: 1px solid #1f1f1f;
+  background: transparent;
+  color: #111;
+  border: 1.2px solid #111;
 }
 
 .remarkable-ui .rm-brand-title {
-  letter-spacing: 0.01em;
+  letter-spacing: 0.005em;
 }
 
 .remarkable-ui .rm-card {
-  background: #f7f7f4;
-  border-color: #d5d5cf;
-  border-radius: 0.8rem;
+  background: #fafaf8;
+  border-color: #d8d8d2;
+  border-radius: 0.5rem;
   box-shadow: none;
 }
 
 .remarkable-ui .rm-button-primary {
-  background: #1f1f1f;
-  color: #f3f3f1;
-  border: 1px solid #1f1f1f;
+  background: #171717;
+  color: #f6f6f3;
+  border: 1px solid #171717;
 }
 
 .remarkable-ui .rm-button-primary:hover {
-  background: #2a2a2a;
+  background: #252525;
 }
 
 .remarkable-ui .rm-button-secondary {
-  background: #efefec;
-  border: 1px solid #d2d2cc;
-  color: #2d2d2d;
+  background: #f1f1ee;
+  border: 1px solid #d3d3cd;
+  color: #262626;
 }
 
 .remarkable-ui .rm-button-secondary:hover {
-  background: #e7e7e3;
+  background: #e9e9e4;
 }
 
 .remarkable-ui .rm-nav-button {
-  border: 1px solid transparent;
+  border: 1px solid #d4d4ce;
+  background: #f3f3ef;
+  color: #40403c;
 }
 
 .remarkable-ui .rm-nav-button.rm-nav-active {
-  background: #1f1f1f;
-  color: #f2f2f0;
-  border-color: #1f1f1f;
+  background: #191919;
+  color: #f6f6f2;
+  border-color: #191919;
 }
 
 .remarkable-ui .rm-nav-button:not(.rm-nav-active) {
-  background: transparent;
+  background: #f3f3ef;
   color: #444;
-  border-color: #d2d2cc;
+  border-color: #d4d4ce;
 }
 
 .remarkable-ui .rm-nav-button:not(.rm-nav-active):hover {
-  background: #ecece8;
-  color: #1f1f1f;
+  background: #ebebe6;
+  color: #171717;
 }
