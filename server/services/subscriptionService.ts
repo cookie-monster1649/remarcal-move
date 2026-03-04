@@ -60,6 +60,26 @@ export class SubscriptionService {
     return end.getTime() >= rangeStart.getTime() && start.getTime() <= rangeEnd.getTime();
   }
 
+  private freeBusyPeriods(component: ICAL.Component): Array<{ start: Date; end: Date }> {
+    const periods: Array<{ start: Date; end: Date }> = [];
+    const properties = component.getAllProperties('freebusy');
+
+    for (const prop of properties) {
+      const values = (prop as any).getValues?.() || [];
+      for (const value of values) {
+        const startTime = value?.start as ICAL.Time | undefined;
+        const endTime = value?.end as ICAL.Time | undefined;
+        if (!startTime || !endTime) continue;
+        const start = startTime.toJSDate();
+        const end = endTime.toJSDate();
+        if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime())) continue;
+        periods.push({ start, end });
+      }
+    }
+
+    return periods;
+  }
+
   private bodyHash(body: string): string {
     return crypto.createHash('sha256').update(body).digest('hex');
   }
@@ -132,14 +152,17 @@ export class SubscriptionService {
         subscriptionId,
       );
 
-      // Fast path when body hash didn't change and we already have a snapshot.
-      if (sub.last_body_hash && sub.last_body_hash === hash) {
+      // Fast path when body hash didn't change and no explicit range sync was requested.
+      // When an explicit window is requested (document-year sync), we still expand again so
+      // newly requested ranges get materialized even if ICS body is unchanged.
+      if (!explicitWindow && sub.last_body_hash && sub.last_body_hash === hash) {
         return;
       }
 
       const parsed = ICAL.parse(body);
       const vcal = new ICAL.Component(parsed);
       const vevents = vcal.getAllSubcomponents('vevent');
+      const vfreebusy = vcal.getAllSubcomponents('vfreebusy');
 
       // Build complete events with linked recurrence exceptions.
       const eventsByUid = new Map<string, ICAL.Event>();
@@ -255,6 +278,31 @@ export class SubscriptionService {
             event.startDate.zone?.tzid || null,
             seenAt,
           );
+        }
+
+        // Include VFREEBUSY periods as synthetic events when present in feed.
+        for (const busyComponent of vfreebusy) {
+          const uidBase = (busyComponent.getFirstPropertyValue('uid') as string | null) || `vfreebusy-${subscriptionId}`;
+          const organizer = (busyComponent.getFirstPropertyValue('organizer') as string | null) || null;
+          const periods = this.freeBusyPeriods(busyComponent);
+
+          periods.forEach((period, idx) => {
+            if (!this.overlaps(period.start, period.end, rangeStart, rangeEnd)) return;
+
+            upsert.run(
+              subscriptionId,
+              uidBase,
+              `vfreebusy-${idx}-${period.start.toISOString()}`,
+              organizer ? `Busy (${organizer})` : 'Busy',
+              period.start.toISOString(),
+              period.end.toISOString(),
+              null,
+              null,
+              0,
+              null,
+              seenAt,
+            );
+          });
         }
 
         // Authoritative snapshot: delete rows not seen in this fetch.
