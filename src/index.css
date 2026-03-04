@@ -1,1 +1,70 @@
 @import "tailwindcss";
+
+/* reMarkable-inspired subtle monochrome facelift */
+.remarkable-ui {
+  background: #ecece8;
+  color: #1a1a1a;
+}
+
+.remarkable-ui .remarkable-header {
+  background: #f4f4f1;
+  border-bottom-color: #d4d4cf;
+}
+
+.remarkable-ui .rm-brand-mark {
+  background: #f4f4f1;
+  color: #1f1f1f;
+  border: 1px solid #1f1f1f;
+}
+
+.remarkable-ui .rm-brand-title {
+  letter-spacing: 0.01em;
+}
+
+.remarkable-ui .rm-card {
+  background: #f7f7f4;
+  border-color: #d5d5cf;
+  border-radius: 0.8rem;
+  box-shadow: none;
+}
+
+.remarkable-ui .rm-button-primary {
+  background: #1f1f1f;
+  color: #f3f3f1;
+  border: 1px solid #1f1f1f;
+}
+
+.remarkable-ui .rm-button-primary:hover {
+  background: #2a2a2a;
+}
+
+.remarkable-ui .rm-button-secondary {
+  background: #efefec;
+  border: 1px solid #d2d2cc;
+  color: #2d2d2d;
+}
+
+.remarkable-ui .rm-button-secondary:hover {
+  background: #e7e7e3;
+}
+
+.remarkable-ui .rm-nav-button {
+  border: 1px solid transparent;
+}
+
+.remarkable-ui .rm-nav-button.rm-nav-active {
+  background: #1f1f1f;
+  color: #f2f2f0;
+  border-color: #1f1f1f;
+}
+
+.remarkable-ui .rm-nav-button:not(.rm-nav-active) {
+  background: transparent;
+  color: #444;
+  border-color: #d2d2cc;
+}
+
+.remarkable-ui .rm-nav-button:not(.rm-nav-active):hover {
+  background: #ecece8;
+  color: #1f1f1f;
+}
