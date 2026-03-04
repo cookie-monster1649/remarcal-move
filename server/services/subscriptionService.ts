@@ -24,7 +24,17 @@ export class SubscriptionService {
 
   private toComponent(componentLike: ICAL.Component | ICAL.Event | null | undefined): ICAL.Component | null {
     if (!componentLike) return null;
-    return componentLike instanceof ICAL.Event ? componentLike.component : componentLike;
+
+    const maybeEvent = componentLike as any;
+    if (maybeEvent?.component && typeof maybeEvent.component.getFirstPropertyValue === 'function') {
+      return maybeEvent.component as ICAL.Component;
+    }
+
+    if (typeof (componentLike as any).getFirstPropertyValue === 'function') {
+      return componentLike as ICAL.Component;
+    }
+
+    return null;
   }
 
   private getFirstPropertyValue(
@@ -32,7 +42,8 @@ export class SubscriptionService {
     propertyName: string,
   ): string | null {
     const component = this.toComponent(componentLike);
-    return (component?.getFirstPropertyValue(propertyName) as string | null) ?? null;
+    if (!component || typeof (component as any).getFirstPropertyValue !== 'function') return null;
+    return (component.getFirstPropertyValue(propertyName) as string | null) ?? null;
   }
 
   private isCancelled(componentLike: ICAL.Component | ICAL.Event | null | undefined): boolean {
