@@ -122,7 +122,36 @@ export class SubscriptionService {
     return raw;
   }
 
-  private toEventDate(time: ICAL.Time | null | undefined): Date | null {
+  private isOffsetTimezoneId(tzid: string | null | undefined): boolean {
+    if (!tzid) return false;
+    return /^[+-]\d{2}:\d{2}$/.test(tzid);
+  }
+
+  private resolveTimezoneId(eventTzid: string | null, calendarTzid: string | null): string | null {
+    if (!eventTzid) return calendarTzid || null;
+    if (!calendarTzid) return eventTzid;
+
+    // Some feeds expose per-event fixed offsets (e.g. +10:30) while the calendar
+    // itself defines the intended local timezone (e.g. UTC+11 / Australia/Melbourne).
+    // Prefer the calendar timezone in that case to preserve expected wall-clock time.
+    if (this.isOffsetTimezoneId(eventTzid) && eventTzid !== calendarTzid) {
+      return calendarTzid;
+    }
+
+    return eventTzid;
+  }
+
+  private getPropertyTimezoneId(
+    componentLike: ICAL.Component | ICAL.Event | null | undefined,
+    propertyName: string,
+  ): string | null {
+    const component = this.toComponent(componentLike);
+    const prop = component?.getFirstProperty(propertyName);
+    const tzid = prop?.getParameter('tzid') as string | undefined;
+    return this.normalizeTimezoneId(tzid || null);
+  }
+
+  private toEventDate(time: ICAL.Time | null | undefined, explicitTzid?: string | null): Date | null {
     if (!time) return null;
 
     const year = Number((time as any).year);
@@ -134,7 +163,7 @@ export class SubscriptionService {
 
     if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) return null;
 
-    const tzid = this.normalizeTimezoneId((time as any).zone?.tzid || null);
+    const tzid = this.normalizeTimezoneId(explicitTzid || (time as any).zone?.tzid || null);
 
     // For date-only values, persist as UTC midnight on that date.
     if (time.isDate) {
@@ -290,11 +319,19 @@ export class SubscriptionService {
       const vcal = new ICAL.Component(parsed);
       const vevents = vcal.getAllSubcomponents('vevent');
       const vfreebusy = vcal.getAllSubcomponents('vfreebusy');
+      const firstVtimezone = vcal.getFirstSubcomponent('vtimezone');
+      const calendarTimezone = this.normalizeTimezoneId(
+        this.getFirstPropertyValue(vcal, 'x-wr-timezone')
+        || this.getFirstPropertyValue(vcal, 'timezone-id')
+        || this.getFirstPropertyValue(firstVtimezone, 'tzid')
+        || null,
+      );
 
       this.traceLog('fetchSubscription:parsed', {
         subscriptionId,
         veventCount: vevents.length,
         vfreebusyCount: vfreebusy.length,
+        calendarTimezone,
       });
 
       // Build complete event sets by UID and deterministically link exceptions.
@@ -377,20 +414,39 @@ export class SubscriptionService {
               if (!next) break;
 
               const details = event.getOccurrenceDetails(next);
-              const startDate = this.toEventDate(details.startDate);
-              const endDate = this.toEventDate(details.endDate);
+              const item = details.item;
+              const sourceTzid = this.resolveTimezoneId(
+                this.normalizeTimezoneId(
+                this.getPropertyTimezoneId(item, 'dtstart')
+                || this.getPropertyTimezoneId(event.component, 'dtstart')
+                || details.startDate.zone?.tzid
+                || event.startDate.zone?.tzid
+                || null,
+                ),
+                calendarTimezone,
+              );
+              const endTzid = this.resolveTimezoneId(
+                this.normalizeTimezoneId(
+                this.getPropertyTimezoneId(item, 'dtend')
+                || this.getPropertyTimezoneId(event.component, 'dtend')
+                || sourceTzid,
+                ),
+                calendarTimezone,
+              );
+
+              const startDate = this.toEventDate(details.startDate, sourceTzid);
+              const endDate = this.toEventDate(details.endDate, endTzid);
               if (!startDate || !endDate) continue;
               if (!this.validDateRange(startDate, endDate)) continue;
               if (startDate.getTime() > rangeEnd.getTime()) break;
               if (!this.overlaps(startDate, endDate, rangeStart, rangeEnd)) continue;
 
-              const item = details.item;
               if (this.isCancelled(item)) continue;
 
               const summary = this.getFirstPropertyValue(item, 'summary') || summaryFallback;
               const location = this.getFirstPropertyValue(item, 'location') || locationFallback;
               const description = this.getFirstPropertyValue(item, 'description') || descriptionFallback;
-              const timezone = this.normalizeTimezoneId(details.startDate.zone?.tzid || event.startDate.zone?.tzid || null);
+              const timezone = sourceTzid;
               const recurrenceId = this.recurrenceKey(details);
 
               upsert.run(
@@ -423,8 +479,24 @@ export class SubscriptionService {
             continue;
           }
 
-          const startDate = this.toEventDate(event.startDate);
-          const endDate = this.toEventDate(event.endDate);
+          const sourceTzid = this.resolveTimezoneId(
+            this.normalizeTimezoneId(
+            this.getPropertyTimezoneId(vevent, 'dtstart')
+            || event.startDate.zone?.tzid
+            || null,
+            ),
+            calendarTimezone,
+          );
+          const endTzid = this.resolveTimezoneId(
+            this.normalizeTimezoneId(
+            this.getPropertyTimezoneId(vevent, 'dtend')
+            || sourceTzid,
+            ),
+            calendarTimezone,
+          );
+
+          const startDate = this.toEventDate(event.startDate, sourceTzid);
+          const endDate = this.toEventDate(event.endDate, endTzid);
           if (!startDate || !endDate) continue;
           if (!this.validDateRange(startDate, endDate)) continue;
           if (!this.overlaps(startDate, endDate, rangeStart, rangeEnd)) continue;
@@ -439,7 +511,7 @@ export class SubscriptionService {
             locationFallback,
             descriptionFallback,
             event.startDate.isDate ? 1 : 0,
-            this.normalizeTimezoneId(event.startDate.zone?.tzid || null),
+            sourceTzid,
             seenAt,
           );
 
@@ -451,7 +523,7 @@ export class SubscriptionService {
               recurrenceId: '',
               startAt: startDate.toISOString(),
               endAt: endDate.toISOString(),
-              timezone: this.normalizeTimezoneId(event.startDate.zone?.tzid || null),
+              timezone: sourceTzid,
               allDay: event.startDate.isDate,
             });
           }
