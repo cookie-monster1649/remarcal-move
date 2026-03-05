@@ -1,6 +1,6 @@
 import { jsPDF } from 'jspdf';
 import { format, addDays, startOfWeek, endOfWeek, startOfMonth, endOfMonth, eachDayOfInterval, isSameMonth, isSameDay, parseISO } from 'date-fns';
-import { formatInTimeZone } from 'date-fns-tz';
+import { formatInTimeZone, fromZonedTime } from 'date-fns-tz';
 import { traceConfig } from '../utils/traceConfig.js';
 
 export interface CalendarEvent {
@@ -198,9 +198,11 @@ export class PDFService {
       summary: sanitizeTitle(e.summary),
     }));
 
+    const isMidnightInTz = (date: Date) => getTzTimeStr(date) === '00:00';
+
     const isAllDayEvent = (e: CalendarEvent) => {
       const duration = e.end.getTime() - e.start.getTime();
-      return !!e.allDay || duration >= 86400000;
+      return !!e.allDay || (duration >= 86400000 && isMidnightInTz(e.start) && isMidnightInTz(e.end));
     };
 
     const doc = new jsPDF({
@@ -784,6 +786,9 @@ export class PDFService {
         doc.text("All day", 7, contentY + 6); 
         
         const currentDayStr = getTzDateStr(day);
+        const nextDayStr = addDayStr(currentDayStr, 1);
+        const dayStartUtc = fromZonedTime(`${currentDayStr}T00:00:00`, tz);
+        const dayEndUtc = fromZonedTime(`${nextDayStr}T00:00:00`, tz);
         const allDayEvents = renderEvents.filter(e => {
             const startStr = getTzDateStr(e.start);
             const endStr = getTzDateStr(e.end);
@@ -791,8 +796,7 @@ export class PDFService {
             // An event is "All Day" if it's explicitly all-day, or spans >= 24h.
             // Do not infer all-day from "starts at midnight" because valid timed
             // events can occur at 00:00 in target timezone.
-            const duration = e.end.getTime() - e.start.getTime();
-            const isAllDayType = !!e.allDay || duration >= 86400000;
+            const isAllDayType = isAllDayEvent(e);
             
             if (!isAllDayType) return false;
             
@@ -847,15 +851,11 @@ export class PDFService {
         }
         
         const dayEvents = renderEvents.filter(e => {
-            const startStr = getTzDateStr(e.start);
-            
-            const duration = e.end.getTime() - e.start.getTime();
-            
-            // If it's an all-day event, it's already handled in the top section
-            if (e.allDay || duration >= 86400000) return false;
-            
-            // For regular events, they only appear on their start day in the schedule
-            return startStr === currentDayStr;
+            if (isAllDayEvent(e)) return false;
+
+            // Timed events should appear on any day they overlap in the target timezone,
+            // not only their start day.
+            return e.end.getTime() > dayStartUtc.getTime() && e.start.getTime() < dayEndUtc.getTime();
         });
 
         const shouldTraceDay = tracePdf && (!traceDay || currentDayStr === traceDay);
@@ -875,8 +875,10 @@ export class PDFService {
         }
         
         const items = dayEvents.map(e => {
-            const rawStartH = getTzHour(e.start);
-            const rawEndH = getTzHour(e.end);
+            const clippedStartDate = e.start.getTime() < dayStartUtc.getTime() ? dayStartUtc : e.start;
+            const clippedEndDate = e.end.getTime() > dayEndUtc.getTime() ? dayEndUtc : e.end;
+            const rawStartH = getTzHour(clippedStartDate);
+            const rawEndH = getTzHour(clippedEndDate);
             let startH = rawStartH;
             let endH = rawEndH;
             if (endH < startH) endH += 24;

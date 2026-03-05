@@ -61,7 +61,7 @@ export class SubscriptionService {
 
   private isCancelled(componentLike: ICAL.Component | ICAL.Event | null | undefined): boolean {
     const status = this.getFirstPropertyValue(componentLike, 'status')?.toUpperCase();
-    return status === 'CANCELLED';
+    return status === 'CANCELLED' || status === 'CANCELED';
   }
 
   private linkedDocumentsWindow(subscriptionId: string): { start: Date; end: Date } | null {
@@ -203,9 +203,13 @@ export class SubscriptionService {
     return new Date(Date.UTC(year, month - 1, day, hour, minute, second, 0));
   }
 
-  private recurrenceKey(details: ICAL.EventOccurrenceDetails): string {
-    if (details.recurrenceId) return details.recurrenceId.toString();
-    return details.startDate.toString();
+  private recurrenceKey(details: { recurrenceId?: ICAL.Time | null; startDate: ICAL.Time }, sourceTzid: string | null): string {
+    const reference = details.recurrenceId || details.startDate;
+    const asDate = this.toEventDate(reference, sourceTzid);
+    if (asDate && Number.isFinite(asDate.getTime())) {
+      return asDate.toISOString();
+    }
+    return reference.toString();
   }
 
   private freeBusyPeriods(component: ICAL.Component): Array<{ start: Date; end: Date }> {
@@ -447,7 +451,7 @@ export class SubscriptionService {
               const location = this.getFirstPropertyValue(item, 'location') || locationFallback;
               const description = this.getFirstPropertyValue(item, 'description') || descriptionFallback;
               const timezone = sourceTzid;
-              const recurrenceId = this.recurrenceKey(details);
+              const recurrenceId = this.recurrenceKey(details, sourceTzid);
 
               upsert.run(
                 subscriptionId,
