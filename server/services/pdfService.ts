@@ -382,12 +382,12 @@ export class PDFService {
     const drawHomeButton = () => {
         const targetPage = getHomeTargetPage();
         const size = 5.2;
-        const pad = 1.5;
+        const pad = 1.8;
         const x = pageWidth - size - pad;
-        const y = 1.5;
+        const y = 1.8;
 
         doc.setDrawColor(0);
-        doc.setLineWidth(0.38);
+        doc.setLineWidth(0.31);
 
         const left = x + 0.6;
         const right = x + size - 0.6;
@@ -620,9 +620,17 @@ export class PDFService {
                 });
                 const spanLanes = spanByRow[r].length > 0 ? (Math.max(...spanByRow[r].map(s => s.lane)) + 1) : 0;
                 let eventY = y + 8 + spanLanes * 3.5;
+                const eventStartY = eventY;
+                const eventStep = 4;
+                const eventBoxH = 3;
+                const eventBottomLimit = y + cellH - 1;
+                const maxRows = Math.max(0, Math.floor((eventBottomLimit - eventStartY - eventBoxH) / eventStep) + 1);
+                const hasOverflow = dayEvents.length > maxRows;
+                const normalRows = hasOverflow ? Math.max(0, maxRows - 1) : maxRows;
+
                 doc.setFontSize(5);
                 doc.setTextColor(0);
-                dayEvents.slice(0, 4).forEach(e => {
+                dayEvents.slice(0, normalRows).forEach(e => {
                     const summary = cutToFit(e.summary, cellW - 4);
                     if (isDeclinedEvent(e)) setDotted();
                     doc.roundedRect(x + 1, eventY, cellW - 2, 3, 1, 1, 'S');
@@ -634,6 +642,14 @@ export class PDFService {
                     }
                     eventY += 4;
                 });
+
+                if (hasOverflow && maxRows > 0) {
+                    doc.roundedRect(x + 1, eventY, cellW - 2, 3, 1, 1, 'S');
+                    doc.text('See all +', x + 2, eventY + 2);
+                    if (pageMap.days[dKey]) {
+                      doc.link(x + 1, eventY, cellW - 2, 3, { pageNumber: pageMap.days[dKey] });
+                    }
+                }
             });
 
             for (let row = 0; row < 6; row++) {
@@ -773,39 +789,44 @@ export class PDFService {
                  const timedEvents = dayEvents.filter(e => !isAllDayEvent(e));
                  const rowIndex = pos.r;
                  const spanLanes = weekSpanByRow[rowIndex].length > 0 ? (Math.max(...weekSpanByRow[rowIndex].map(s => s.lane)) + 1) : 0;
-                 let eventY = y + 10 + spanLanes * 4;
+                let eventY = y + 10 + spanLanes * 4;
+                const eventStartY = eventY;
+                const eventStep = 6;
+                const eventBoxH = 5;
+                const eventBottomLimit = y + cellH - 1;
+                const maxRows = Math.max(0, Math.floor((eventBottomLimit - eventStartY - eventBoxH) / eventStep) + 1);
+                const eventRows = [
+                  ...allDayEvents.map((e) => ({ event: e, label: cutToFit(e.summary, cellW - 7) })),
+                  ...timedEvents.map((e) => {
+                    const time = getTzTimeStr(e.start);
+                    return { event: e, label: cutToFit(`${time} ${e.summary}`, cellW - 7) };
+                  }),
+                ];
+                const hasOverflow = eventRows.length > maxRows;
+                const normalRows = hasOverflow ? Math.max(0, maxRows - 1) : maxRows;
+
                  doc.setFontSize(6);
                  doc.setFont("helvetica", "normal");
                  doc.setTextColor(0);
-                 allDayEvents.forEach(e => {
-                     if (eventY < y + cellH - 5) {
-                         const summary = cutToFit(e.summary, cellW - 7);
-                        if (isDeclinedEvent(e)) setDotted();
-                         doc.roundedRect(x + 2, eventY, cellW - 4, 5, 1, 1, 'S');
-                        if (isDeclinedEvent(e)) resetDotted();
-                         doc.text(summary, x + 3, eventY + 3.5);
-                        if (isDeclinedEvent(e)) {
-                          doc.setLineWidth(0.1);
-                          doc.line(x + 2.5, eventY + 2.5, x + cellW - 2.5, eventY + 2.5);
-                        }
-                         eventY += 6;
-                     }
-                 });
-                 timedEvents.forEach(e => {
-                     if (eventY < y + cellH - 5) {
-                         const time = getTzTimeStr(e.start);
-                         const summary = cutToFit(e.summary, cellW - 12);
-                        if (isDeclinedEvent(e)) setDotted();
-                         doc.roundedRect(x + 2, eventY, cellW - 4, 5, 1, 1, 'S');
-                        if (isDeclinedEvent(e)) resetDotted();
-                         doc.text(`${time} ${summary}`, x + 3, eventY + 3.5);
-                        if (isDeclinedEvent(e)) {
-                          doc.setLineWidth(0.1);
-                          doc.line(x + 2.5, eventY + 2.5, x + cellW - 2.5, eventY + 2.5);
-                        }
-                         eventY += 6;
-                     }
-                 });
+                eventRows.slice(0, normalRows).forEach((row) => {
+                    if (isDeclinedEvent(row.event)) setDotted();
+                    doc.roundedRect(x + 2, eventY, cellW - 4, 5, 1, 1, 'S');
+                    if (isDeclinedEvent(row.event)) resetDotted();
+                    doc.text(row.label, x + 3, eventY + 3.5);
+                    if (isDeclinedEvent(row.event)) {
+                      doc.setLineWidth(0.1);
+                      doc.line(x + 2.5, eventY + 2.5, x + cellW - 2.5, eventY + 2.5);
+                    }
+                    eventY += 6;
+                });
+
+                if (hasOverflow && maxRows > 0) {
+                    doc.roundedRect(x + 2, eventY, cellW - 4, 5, 1, 1, 'S');
+                    doc.text('See all +', x + 3, eventY + 3.5);
+                    if (pageMap.days[dKey]) {
+                      doc.link(x + 2, eventY, cellW - 4, 5, { pageNumber: pageMap.days[dKey] });
+                    }
+                }
              });
              rowGroups.forEach((group, groupIndex) => {
                weekSpanByRow[groupIndex].forEach(seg => {
