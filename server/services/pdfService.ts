@@ -623,7 +623,7 @@ export class PDFService {
                 const eventStartY = eventY;
                 const eventStep = 4;
                 const eventBoxH = 3;
-                const eventBottomLimit = y + cellH - 1;
+                const eventBottomLimit = y + cellH - 0.2;
                 const maxRows = Math.max(0, Math.floor((eventBottomLimit - eventStartY - eventBoxH) / eventStep) + 1);
                 const hasOverflow = dayEvents.length > maxRows;
                 const normalRows = hasOverflow ? Math.max(0, maxRows - 1) : maxRows;
@@ -796,10 +796,10 @@ export class PDFService {
                 const eventBottomLimit = y + cellH - 1;
                 const maxRows = Math.max(0, Math.floor((eventBottomLimit - eventStartY - eventBoxH) / eventStep) + 1);
                 const eventRows = [
-                  ...allDayEvents.map((e) => ({ event: e, label: cutToFit(e.summary, cellW - 7) })),
+                  ...allDayEvents.map((e) => ({ event: e, label: cutToFit(e.summary, cellW - 5) })),
                   ...timedEvents.map((e) => {
                     const time = getTzTimeStr(e.start);
-                    return { event: e, label: cutToFit(`${time} ${e.summary}`, cellW - 7) };
+                    return { event: e, label: cutToFit(`${time} ${e.summary}`, cellW - 5) };
                   }),
                 ];
                 const hasOverflow = eventRows.length > maxRows;
