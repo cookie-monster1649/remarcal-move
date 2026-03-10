@@ -212,6 +212,201 @@ export class SubscriptionService {
     return reference.toString();
   }
 
+  /**
+   * Parse an iCalendar feed and expand all component instances that overlap the
+   * provided window.  The returned array mirrors the shape of rows inserted into
+   * the `subscription_events` table and is exposed for unit testing.
+   */
+  public parseICSEvents(
+    body: string,
+    rangeStart: Date,
+    rangeEnd: Date,
+  ): Array<{
+    uid: string;
+    recurrenceId: string;
+    summary: string;
+    start: Date;
+    end: Date;
+    location: string | null;
+    description: string | null;
+    allDay: boolean;
+    timezone: string | null;
+  }> {
+    const parsed = ICAL.parse(body);
+    const vcal = new ICAL.Component(parsed);
+    const vevents = vcal.getAllSubcomponents('vevent');
+    const firstVtimezone = vcal.getFirstSubcomponent('vtimezone');
+    const calendarTimezone = this.normalizeTimezoneId(
+      this.getFirstPropertyValue(vcal, 'x-wr-timezone')
+      || this.getFirstPropertyValue(vcal, 'timezone-id')
+      || this.getFirstPropertyValue(firstVtimezone, 'tzid')
+      || null,
+    );
+
+    const eventsByUid = new Map<string, ICAL.Event>();
+    const pendingExceptionsByUid = new Map<string, ICAL.Component[]>();
+
+    for (const vevent of vevents) {
+      const uid = vevent.getFirstPropertyValue('uid') as string | null;
+      if (!uid) continue;
+
+      let event: ICAL.Event;
+      try {
+        event = new ICAL.Event(vevent);
+      } catch {
+        continue;
+      }
+
+      const recurrenceId = vevent.getFirstPropertyValue('recurrence-id');
+      if (recurrenceId) {
+        const base = eventsByUid.get(uid);
+        if (base) {
+          base.relateException(vevent);
+        } else {
+          const list = pendingExceptionsByUid.get(uid) || [];
+          list.push(vevent);
+          pendingExceptionsByUid.set(uid, list);
+        }
+        continue;
+      }
+
+      eventsByUid.set(uid, event);
+      const queued = pendingExceptionsByUid.get(uid);
+      if (queued && queued.length) {
+        queued.forEach((ex) => event.relateException(ex));
+        pendingExceptionsByUid.delete(uid);
+      }
+    }
+
+    const output: Array<any> = [];
+
+    for (const event of eventsByUid.values()) {
+      const vevent = event.component;
+      if (this.isCancelled(vevent)) continue;
+
+      const uid = vevent.getFirstPropertyValue('uid') as string | null;
+      if (!uid) continue;
+
+      const summaryFallback = (vevent.getFirstPropertyValue('summary') as string | null) || '';
+      const locationFallback = (vevent.getFirstPropertyValue('location') as string | null) || null;
+      const descriptionFallback = (vevent.getFirstPropertyValue('description') as string | null) || null;
+
+      const pushOccurrence = (details: any, sourceTzid: string | null, endTzid: string | null) => {
+        const startDate = this.toEventDate(details.startDate, sourceTzid);
+        const endDate = this.toEventDate(details.endDate, endTzid);
+        if (!startDate || !endDate) return;
+        if (!this.validDateRange(startDate, endDate)) return;
+        if (startDate.getTime() > rangeEnd.getTime()) return;
+        if (!this.overlaps(startDate, endDate, rangeStart, rangeEnd)) return;
+        if (this.isCancelled(details.item)) return;
+
+        const summary = this.getFirstPropertyValue(details.item, 'summary') || summaryFallback;
+        const location = this.getFirstPropertyValue(details.item, 'location') || locationFallback;
+        const description = this.getFirstPropertyValue(details.item, 'description') || descriptionFallback;
+        const timezone = sourceTzid;
+        const recurrenceId = this.recurrenceKey(details, sourceTzid);
+
+        output.push({
+          uid,
+          recurrenceId,
+          summary,
+          start: startDate,
+          end: endDate,
+          location,
+          description,
+          allDay: details.startDate.isDate,
+          timezone,
+        });
+      };
+
+      if (event.isRecurring()) {
+        const iterator = event.iterator(event.startDate);
+        let guard = 0;
+        while (true) {
+          guard++;
+          if (guard > this.maxOccurrenceIterations) break;
+
+          const next = iterator.next();
+          if (!next) break;
+          const details = event.getOccurrenceDetails(next);
+          const item = details.item;
+          const sourceTzid = this.resolveTimezoneId(
+            this.normalizeTimezoneId(
+              this.getPropertyTimezoneId(item, 'dtstart')
+              || this.getPropertyTimezoneId(event.component, 'dtstart')
+              || details.startDate.zone?.tzid
+              || event.startDate.zone?.tzid
+              || null,
+            ),
+            calendarTimezone,
+          );
+          const endTzid = this.resolveTimezoneId(
+            this.normalizeTimezoneId(
+              this.getPropertyTimezoneId(item, 'dtend')
+              || this.getPropertyTimezoneId(event.component, 'dtend')
+              || sourceTzid,
+            ),
+            calendarTimezone,
+          );
+          pushOccurrence(details, sourceTzid, endTzid);
+        }
+      } else {
+        const sourceTzid = this.resolveTimezoneId(
+          this.normalizeTimezoneId(
+            this.getPropertyTimezoneId(vevent, 'dtstart')
+            || event.startDate.zone?.tzid
+            || null,
+          ),
+          calendarTimezone,
+        );
+        const endTzid = this.resolveTimezoneId(
+          this.normalizeTimezoneId(
+            this.getPropertyTimezoneId(vevent, 'dtend')
+            || sourceTzid,
+          ),
+          calendarTimezone,
+        );
+
+        // create a pretend details object for single-instance events
+        const details = { startDate: event.startDate, endDate: event.endDate, item: vevent };
+        pushOccurrence(details, sourceTzid, endTzid);
+      }
+    }
+
+    // include vfreebusy same as in fetchSubscription
+    const vfreebusy = vcal.getAllSubcomponents('vfreebusy');
+    for (const busyComponent of vfreebusy) {
+      const uidBase = (busyComponent.getFirstPropertyValue('uid') as string | null) || `vfreebusy`;
+      const organizer = (busyComponent.getFirstPropertyValue('organizer') as string | null) || null;
+      const periods = this.freeBusyPeriods(busyComponent);
+
+      periods.forEach((period, idx) => {
+        if (!this.overlaps(period.start, period.end, rangeStart, rangeEnd)) return;
+        output.push({
+          uid: uidBase,
+          recurrenceId: `vfreebusy-${idx}-${period.start.toISOString()}`,
+          summary: organizer ? `Busy (${organizer})` : 'Busy',
+          start: period.start,
+          end: period.end,
+          location: null,
+          description: null,
+          allDay: false,
+          timezone: null,
+        });
+      });
+    }
+
+    return output;
+  }
+
+  /**
+   * Remove all stored events belonging to a subscription.  Useful when a
+   * user deletes/re-adds a feed or wants to rebuild from scratch.
+   */
+  public clearSubscription(subscriptionId: string): void {
+    db.prepare('DELETE FROM subscription_events WHERE subscription_id = ?').run(subscriptionId);
+  }
+
   private freeBusyPeriods(component: ICAL.Component): Array<{ start: Date; end: Date }> {
     const periods: Array<{ start: Date; end: Date }> = [];
     const properties = component.getAllProperties('freebusy');
@@ -319,64 +514,16 @@ export class SubscriptionService {
         return;
       }
 
-      const parsed = ICAL.parse(body);
-      const vcal = new ICAL.Component(parsed);
-      const vevents = vcal.getAllSubcomponents('vevent');
-      const vfreebusy = vcal.getAllSubcomponents('vfreebusy');
-      const firstVtimezone = vcal.getFirstSubcomponent('vtimezone');
-      const calendarTimezone = this.normalizeTimezoneId(
-        this.getFirstPropertyValue(vcal, 'x-wr-timezone')
-        || this.getFirstPropertyValue(vcal, 'timezone-id')
-        || this.getFirstPropertyValue(firstVtimezone, 'tzid')
-        || null,
-      );
-
-      this.traceLog('fetchSubscription:parsed', {
-        subscriptionId,
-        veventCount: vevents.length,
-        vfreebusyCount: vfreebusy.length,
-        calendarTimezone,
-      });
-
-      // Build complete event sets by UID and deterministically link exceptions.
-      const eventsByUid = new Map<string, ICAL.Event>();
-      const pendingExceptionsByUid = new Map<string, ICAL.Component[]>();
-
-      for (const vevent of vevents) {
-        const uid = vevent.getFirstPropertyValue('uid') as string | null;
-        if (!uid) continue;
-
-        let event: ICAL.Event;
-        try {
-          event = new ICAL.Event(vevent);
-        } catch {
-          continue;
-        }
-
-        const recurrenceId = vevent.getFirstPropertyValue('recurrence-id');
-        if (recurrenceId) {
-          const base = eventsByUid.get(uid);
-          if (base) {
-            base.relateException(vevent);
-          } else {
-            const list = pendingExceptionsByUid.get(uid) || [];
-            list.push(vevent);
-            pendingExceptionsByUid.set(uid, list);
-          }
-          continue;
-        }
-
-        eventsByUid.set(uid, event);
-        const queued = pendingExceptionsByUid.get(uid);
-        if (queued && queued.length) {
-          queued.forEach((ex) => event.relateException(ex));
-          pendingExceptionsByUid.delete(uid);
-        }
-      }
-
+// expand everything in the calendar view; helper handles tz/recurrence.
+      const occurrences = this.parseICSEvents(body, rangeStart, rangeEnd);
       const seenAt = new Date().toISOString();
       const traceMaxRows = traceConfig.limit;
       let traceRows = 0;
+
+      this.traceLog('fetchSubscription:parsed', {
+        subscriptionId,
+        occurrenceCount: occurrences.length,
+      });
 
       const upsert = db.prepare(`
         INSERT INTO subscription_events (
@@ -395,167 +542,33 @@ export class SubscriptionService {
       `);
 
       const applySnapshot = db.transaction(() => {
-        for (const event of eventsByUid.values()) {
-          const vevent = event.component;
-          if (this.isCancelled(vevent)) continue;
-
-          const uid = vevent.getFirstPropertyValue('uid') as string | null;
-          if (!uid) continue;
-
-          const summaryFallback = (vevent.getFirstPropertyValue('summary') as string | null) || '';
-          const locationFallback = (vevent.getFirstPropertyValue('location') as string | null) || null;
-          const descriptionFallback = (vevent.getFirstPropertyValue('description') as string | null) || null;
-
-          if (event.isRecurring()) {
-            const iterator = event.iterator(this.toIcalTime(rangeStart));
-            let guard = 0;
-
-            while (true) {
-              guard++;
-              if (guard > this.maxOccurrenceIterations) break;
-
-              const next = iterator.next();
-              if (!next) break;
-
-              const details = event.getOccurrenceDetails(next);
-              const item = details.item;
-              const sourceTzid = this.resolveTimezoneId(
-                this.normalizeTimezoneId(
-                this.getPropertyTimezoneId(item, 'dtstart')
-                || this.getPropertyTimezoneId(event.component, 'dtstart')
-                || details.startDate.zone?.tzid
-                || event.startDate.zone?.tzid
-                || null,
-                ),
-                calendarTimezone,
-              );
-              const endTzid = this.resolveTimezoneId(
-                this.normalizeTimezoneId(
-                this.getPropertyTimezoneId(item, 'dtend')
-                || this.getPropertyTimezoneId(event.component, 'dtend')
-                || sourceTzid,
-                ),
-                calendarTimezone,
-              );
-
-              const startDate = this.toEventDate(details.startDate, sourceTzid);
-              const endDate = this.toEventDate(details.endDate, endTzid);
-              if (!startDate || !endDate) continue;
-              if (!this.validDateRange(startDate, endDate)) continue;
-              if (startDate.getTime() > rangeEnd.getTime()) break;
-              if (!this.overlaps(startDate, endDate, rangeStart, rangeEnd)) continue;
-
-              if (this.isCancelled(item)) continue;
-
-              const summary = this.getFirstPropertyValue(item, 'summary') || summaryFallback;
-              const location = this.getFirstPropertyValue(item, 'location') || locationFallback;
-              const description = this.getFirstPropertyValue(item, 'description') || descriptionFallback;
-              const timezone = sourceTzid;
-              const recurrenceId = this.recurrenceKey(details, sourceTzid);
-
-              upsert.run(
-                subscriptionId,
-                uid,
-                recurrenceId,
-                summary,
-                startDate.toISOString(),
-                endDate.toISOString(),
-                location,
-                description,
-                details.startDate.isDate ? 1 : 0,
-                timezone,
-                seenAt,
-              );
-
-              if (traceConfig.ingest && traceRows < traceMaxRows) {
-                traceRows++;
-                this.traceLog('occurrence:upsert', {
-                  subscriptionId,
-                  uid,
-                  recurrenceId,
-                  startAt: startDate.toISOString(),
-                  endAt: endDate.toISOString(),
-                  timezone,
-                  allDay: details.startDate.isDate,
-                });
-              }
-            }
-            continue;
-          }
-
-          const sourceTzid = this.resolveTimezoneId(
-            this.normalizeTimezoneId(
-            this.getPropertyTimezoneId(vevent, 'dtstart')
-            || event.startDate.zone?.tzid
-            || null,
-            ),
-            calendarTimezone,
-          );
-          const endTzid = this.resolveTimezoneId(
-            this.normalizeTimezoneId(
-            this.getPropertyTimezoneId(vevent, 'dtend')
-            || sourceTzid,
-            ),
-            calendarTimezone,
-          );
-
-          const startDate = this.toEventDate(event.startDate, sourceTzid);
-          const endDate = this.toEventDate(event.endDate, endTzid);
-          if (!startDate || !endDate) continue;
-          if (!this.validDateRange(startDate, endDate)) continue;
-          if (!this.overlaps(startDate, endDate, rangeStart, rangeEnd)) continue;
-
+        for (const ev of occurrences) {
           upsert.run(
             subscriptionId,
-            uid,
-            '',
-            summaryFallback,
-            startDate.toISOString(),
-            endDate.toISOString(),
-            locationFallback,
-            descriptionFallback,
-            event.startDate.isDate ? 1 : 0,
-            sourceTzid,
+            ev.uid,
+            ev.recurrenceId,
+            ev.summary,
+            ev.start.toISOString(),
+            ev.end.toISOString(),
+            ev.location,
+            ev.description,
+            ev.allDay ? 1 : 0,
+            ev.timezone,
             seenAt,
           );
 
           if (traceConfig.ingest && traceRows < traceMaxRows) {
             traceRows++;
-            this.traceLog('single-event:upsert', {
+            this.traceLog('occurrence:upsert', {
               subscriptionId,
-              uid,
-              recurrenceId: '',
-              startAt: startDate.toISOString(),
-              endAt: endDate.toISOString(),
-              timezone: sourceTzid,
-              allDay: event.startDate.isDate,
+              uid: ev.uid,
+              recurrenceId: ev.recurrenceId,
+              startAt: ev.start.toISOString(),
+              endAt: ev.end.toISOString(),
+              timezone: ev.timezone,
+              allDay: ev.allDay,
             });
           }
-        }
-
-        // Include VFREEBUSY periods as synthetic events when present in feed.
-        for (const busyComponent of vfreebusy) {
-          const uidBase = (busyComponent.getFirstPropertyValue('uid') as string | null) || `vfreebusy-${subscriptionId}`;
-          const organizer = (busyComponent.getFirstPropertyValue('organizer') as string | null) || null;
-          const periods = this.freeBusyPeriods(busyComponent);
-
-          periods.forEach((period, idx) => {
-            if (!this.overlaps(period.start, period.end, rangeStart, rangeEnd)) return;
-
-            upsert.run(
-              subscriptionId,
-              uidBase,
-              `vfreebusy-${idx}-${period.start.toISOString()}`,
-              organizer ? `Busy (${organizer})` : 'Busy',
-              period.start.toISOString(),
-              period.end.toISOString(),
-              null,
-              null,
-              0,
-              null,
-              seenAt,
-            );
-          });
         }
 
         // Authoritative snapshot: delete rows not seen in this fetch.
