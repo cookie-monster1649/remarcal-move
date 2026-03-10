@@ -51,13 +51,15 @@ interface Device {
   backup_frequency_hours: number;
   last_backup_at?: string | null;
   last_connected_at: string;
+  auth_mode?: 'password' | 'key';
+  allow_password_fallback?: number;
 }
 
 interface DeviceBackup {
   id: string;
   device_id: string;
   device_name?: string;
-  status: 'running' | 'success' | 'error' | 'partial';
+  status: 'running' | 'success' | 'error' | 'partial' | 'cancelled';
   started_at: string;
   completed_at?: string | null;
   doc_count?: number;
@@ -143,6 +145,7 @@ export default function App() {
   const [subscriptionFetchStatus, setSubscriptionFetchStatus] = useState<Record<string, { state: 'idle' | 'running' | 'success' | 'error'; message?: string; count?: number; at?: string }>>({});
   const [manualSyncStatus, setManualSyncStatus] = useState<Record<string, boolean>>({});
   const [manualBackupStatus, setManualBackupStatus] = useState<Record<string, boolean>>({});
+  const [enrollKeyStatus, setEnrollKeyStatus] = useState<Record<string, boolean>>({});
 
   const [showDeviceForm, setShowDeviceForm] = useState(false);
   const [editingDevice, setEditingDevice] = useState<Device | null>(null);
@@ -155,6 +158,7 @@ export default function App() {
     sync_when_connected: false,
     backup_enabled: false,
     backup_frequency_hours: 24,
+    allow_password_fallback: true,
   });
 
   const fetchData = async () => {
@@ -353,6 +357,7 @@ export default function App() {
         sync_when_connected: false,
         backup_enabled: false,
         backup_frequency_hours: 24,
+        allow_password_fallback: true,
       });
       fetchData();
     } catch (err: any) {
@@ -512,6 +517,31 @@ export default function App() {
       await fetchData();
     } catch (err: any) {
       alert(err.response?.data?.error || err.message || 'Failed to cancel backup');
+    }
+  };
+
+  const enrollDeviceKey = async (deviceId: string) => {
+    setEnrollKeyStatus(prev => ({ ...prev, [deviceId]: true }));
+    try {
+      await axios.post(`/api/devices/${deviceId}/enroll-key`);
+      await fetchData();
+    } catch (err: any) {
+      alert(err.response?.data?.error || err.message || 'Failed to enroll SSH key');
+    } finally {
+      setEnrollKeyStatus(prev => {
+        const next = { ...prev };
+        delete next[deviceId];
+        return next;
+      });
+    }
+  };
+
+  const formatDateTime = (value?: string | null) => {
+    if (!value) return 'Never';
+    try {
+      return new Date(value).toLocaleString();
+    } catch {
+      return 'Never';
     }
   };
 
@@ -814,6 +844,7 @@ export default function App() {
                       sync_when_connected: false,
                       backup_enabled: false,
                       backup_frequency_hours: 24,
+                      allow_password_fallback: true,
                     });
                     setShowDeviceForm(true);
                 }}
@@ -829,6 +860,10 @@ export default function App() {
                     const latestBackup = getLatestBackupForDevice(dev.id);
                     const backupRunning = !!manualBackupStatus[dev.id] || latestBackup?.status === 'running';
                     const latestProgress = latestBackup ? backupProgress[latestBackup.id] : null;
+                    const keyEnrolling = !!enrollKeyStatus[dev.id];
+                    const docsForDevice = documents.filter((d) => d.device_id === dev.id);
+                    const syncRunning = docsForDevice.some((d) => d.sync_status === 'syncing' || !!manualSyncStatus[d.id]);
+                    const syncErrored = docsForDevice.some((d) => d.sync_status === 'error');
                     return (
                     <div key={dev.id} className="rm-card bg-white p-6 rounded-2xl border border-stone-200 shadow-sm flex justify-between items-start gap-4">
                         <div>
@@ -840,56 +875,56 @@ export default function App() {
                                 {deviceStatus[dev.id] === 'checking' && <RefreshCw size={14} className="animate-spin text-stone-400" title="Checking..." />}
                             </div>
                             <p className="text-sm text-stone-500 font-mono mt-1">{dev.username}@{dev.host}:{dev.port}</p>
-                            <div className="mt-3 space-y-2 text-xs">
-                              <div className="p-2 rounded border border-stone-200 bg-stone-50">
-                                <p className="font-semibold text-stone-700">Sync</p>
-                                <p className="text-stone-500 mt-1">{dev.sync_when_connected ? 'Sync when connected: enabled' : 'Sync when connected: disabled'}</p>
-                              </div>
-                              <div className="p-2 rounded border border-stone-200 bg-stone-50">
-                                <p className="font-semibold text-stone-700">Backup</p>
-                                <p className="text-stone-500 mt-1">
-                                  {dev.backup_enabled
-                                    ? `Scheduled: every ${dev.backup_frequency_hours}h (when connected)`
-                                    : 'Scheduled backup: disabled'}
-                                </p>
-                                <p className="text-stone-400 mt-1">
-                                  Last backup: {dev.last_backup_at ? new Date(dev.last_backup_at).toLocaleString() : 'Never'}
-                                </p>
-                                {latestBackup && (
-                                  <p className={`mt-1 ${latestBackup.status === 'error' ? 'text-red-600' : latestBackup.status === 'partial' ? 'text-amber-600' : latestBackup.status === 'running' ? 'text-blue-600' : 'text-green-600'}`}>
-                                    Latest: {latestBackup.status}
-                                  </p>
-                                )}
-                                {backupRunning && latestProgress && (
-                                  <div className="mt-2">
-                                    <div className="h-2 bg-stone-200 rounded overflow-hidden">
-                                      <div
-                                        className="h-2 bg-blue-500"
-                                        style={{ width: `${Math.max(0, Math.min(100, latestProgress.percent || 0))}%` }}
-                                      />
-                                    </div>
-                                    <p className="text-[11px] text-stone-500 mt-1">
-                                      {latestProgress.percent || 0}% • {(latestProgress.speedBytesPerSec ? (latestProgress.speedBytesPerSec / (1024 * 1024)).toFixed(2) : '0.00')} MB/s
-                                      {latestProgress.message ? ` • ${latestProgress.message}` : ''}
-                                    </p>
-                                  </div>
-                                )}
+                            <div className="mt-2 flex items-center gap-2 text-xs">
+                              <span className={`px-2 py-0.5 rounded-full border ${dev.auth_mode === 'key' ? 'bg-green-50 border-green-200 text-green-700' : 'bg-amber-50 border-amber-200 text-amber-700'}`}>
+                                Auth: {dev.auth_mode === 'key' ? 'SSH key' : 'Password'}
+                              </span>
+                              {dev.auth_mode !== 'key' && (
                                 <button
-                                  onClick={() => runDeviceBackup(dev.id)}
-                                  disabled={backupRunning}
-                                  className="mt-2 px-3 py-1.5 text-xs rounded-lg bg-stone-900 text-white hover:bg-stone-800 disabled:opacity-60"
+                                  onClick={() => enrollDeviceKey(dev.id)}
+                                  disabled={keyEnrolling}
+                                  className="px-2 py-0.5 rounded-full bg-stone-900 text-white hover:bg-stone-800 disabled:opacity-60"
                                 >
-                                  {backupRunning ? 'Backing up…' : 'Run Backup Now'}
+                                  {keyEnrolling ? 'Enrolling key…' : 'Enable fast backup (SSH key)'}
                                 </button>
-                                {backupRunning && latestBackup && (
-                                  <button
-                                    onClick={() => cancelDeviceBackup(latestBackup.id)}
-                                    className="mt-2 ml-2 px-3 py-1.5 text-xs rounded-lg bg-red-600 text-white hover:bg-red-500"
-                                  >
-                                    Cancel Backup
-                                  </button>
-                                )}
+                              )}
+                            </div>
+                            <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
+                              <div className={`flex items-center gap-2 px-3 py-1 rounded-full border ${syncRunning ? 'bg-blue-50 border-blue-200 text-blue-700' : syncErrored ? 'bg-red-50 border-red-200 text-red-700' : dev.sync_when_connected ? 'bg-green-50 border-green-200 text-green-700' : 'bg-stone-50 border-stone-200 text-stone-700'}`}>
+                                {syncRunning ? <RefreshCw size={12} className="animate-spin" /> : syncErrored ? <XCircle size={12} /> : <CheckCircle size={12} />}
+                                <span>{syncRunning ? 'Sync: Running' : syncErrored ? 'Sync: Error' : dev.sync_when_connected ? 'Sync: Enabled' : 'Sync: Disabled'}</span>
                               </div>
+                              <div className={`flex items-center gap-2 px-3 py-1 rounded-full border ${backupRunning ? 'bg-blue-50 border-blue-200 text-blue-700' : latestBackup?.status === 'error' ? 'bg-red-50 border-red-200 text-red-700' : latestBackup?.status === 'partial' ? 'bg-amber-50 border-amber-200 text-amber-700' : 'bg-stone-50 border-stone-200 text-stone-700'}`}>
+                                {backupRunning ? <RefreshCw size={12} className="animate-spin" /> : latestBackup?.status === 'error' ? <XCircle size={12} /> : <CheckCircle size={12} />}
+                                <span>Backup: {backupRunning ? 'Running' : latestBackup?.status || (dev.backup_enabled ? `Every ${dev.backup_frequency_hours}h` : 'Disabled')}</span>
+                                <span className="opacity-70">• Last: {formatDateTime(dev.last_backup_at)}</span>
+                              </div>
+                              <button
+                                onClick={() => runDeviceBackup(dev.id)}
+                                disabled={backupRunning}
+                                className="px-3 py-1 text-xs rounded-full bg-stone-900 text-white hover:bg-stone-800 disabled:opacity-60"
+                              >
+                                {backupRunning ? 'Backing up…' : 'Run Backup Now'}
+                              </button>
+                              {backupRunning && latestBackup && (
+                                <button
+                                  onClick={() => cancelDeviceBackup(latestBackup.id)}
+                                  className="px-3 py-1 text-xs rounded-full bg-red-600 text-white hover:bg-red-500"
+                                >
+                                  Cancel Backup
+                                </button>
+                              )}
+                              {backupRunning && latestProgress && (
+                                <div className="w-full mt-2 p-2 rounded border border-blue-200 bg-blue-50">
+                                  <div className="h-2 bg-blue-100 rounded overflow-hidden">
+                                    <div className="h-2 bg-blue-500" style={{ width: `${Math.max(0, Math.min(100, latestProgress.percent || 0))}%` }} />
+                                  </div>
+                                  <p className="text-[11px] text-blue-700 mt-1">
+                                    {latestProgress.phase} • {latestProgress.percent || 0}% • {(latestProgress.speedBytesPerSec ? (latestProgress.speedBytesPerSec / (1024 * 1024)).toFixed(2) : '0.00')} MB/s
+                                    {latestProgress.message ? ` • ${latestProgress.message}` : ''}
+                                  </p>
+                                </div>
+                              )}
                             </div>
                             <p className="text-xs text-stone-400 mt-2">Last connected: {new Date(dev.last_connected_at).toLocaleString()}</p>
                         </div>
@@ -906,6 +941,7 @@ export default function App() {
                                         sync_when_connected: !!dev.sync_when_connected,
                                         backup_enabled: !!dev.backup_enabled,
                                         backup_frequency_hours: dev.backup_frequency_hours || 24,
+                                        allow_password_fallback: dev.allow_password_fallback !== 0,
                                     }); // Don't show password
                                     setShowDeviceForm(true);
                                 }}
@@ -1336,6 +1372,15 @@ export default function App() {
                         </select>
                       </div>
                       <p className="text-xs text-stone-500 mt-1">Backups run only when the device is reachable, and separately from sync.</p>
+                      <div className="flex items-center gap-2 mt-2">
+                        <input
+                          type="checkbox"
+                          id="allow_password_fallback"
+                          checked={deviceForm.allow_password_fallback}
+                          onChange={e => setDeviceForm({ ...deviceForm, allow_password_fallback: e.target.checked })}
+                        />
+                        <label htmlFor="allow_password_fallback" className="text-xs text-stone-600">Allow password fallback for manual connection checks</label>
+                      </div>
                     </div>
 
                     <div className="flex justify-end gap-2 mt-6">
