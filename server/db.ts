@@ -83,6 +83,7 @@ export function initDb() {
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
       encrypted_url TEXT NOT NULL,
+      owner_email TEXT,
       update_frequency_minutes INTEGER DEFAULT 30,
       enabled INTEGER DEFAULT 1,
       last_fetched_at TEXT,
@@ -242,6 +243,13 @@ export function initDb() {
   if (!hasParticipationStatus) {
     console.log('Migrating subscription_events: adding participation_status column');
     db.exec('ALTER TABLE subscription_events ADD COLUMN participation_status TEXT');
+  }
+
+  const subscriptionsTableInfo = db.prepare("PRAGMA table_info(calendar_subscriptions)").all() as any[];
+  const hasSubscriptionOwnerEmail = subscriptionsTableInfo.some(col => col.name === 'owner_email');
+  if (!hasSubscriptionOwnerEmail) {
+    console.log('Migrating calendar_subscriptions: adding owner_email column');
+    db.exec('ALTER TABLE calendar_subscriptions ADD COLUMN owner_email TEXT');
   }
 
   // Repair stale foreign keys left behind by old migrations where documents table was renamed.

@@ -32,6 +32,7 @@ interface Account {
 interface Subscription {
   id: string;
   name: string;
+  owner_email?: string | null;
   update_frequency_minutes: number;
   enabled: number;
   last_fetched_at?: string;
@@ -96,6 +97,7 @@ export default function App() {
   const [subscriptionForm, setSubscriptionForm] = useState({
     name: '',
     url: '',
+    owner_email: '',
     update_frequency_minutes: 30,
     enabled: true,
   });
@@ -319,7 +321,7 @@ export default function App() {
       }
       setShowSubscriptionForm(false);
       setEditingSubscription(null);
-      setSubscriptionForm({ name: '', url: '', update_frequency_minutes: 30, enabled: true });
+      setSubscriptionForm({ name: '', url: '', owner_email: '', update_frequency_minutes: 30, enabled: true });
       fetchData();
     } catch (err: any) {
       setModalError(err.response?.data?.error || err.message);
@@ -756,7 +758,7 @@ export default function App() {
                 <button
                   onClick={() => {
                     setEditingSubscription(null);
-                    setSubscriptionForm({ name: '', url: '', update_frequency_minutes: 30, enabled: true });
+                    setSubscriptionForm({ name: '', url: '', owner_email: '', update_frequency_minutes: 30, enabled: true });
                     setShowSubscriptionForm(true);
                   }}
                   className="rm-button-secondary flex items-center px-4 py-2 bg-stone-800 text-white rounded-lg hover:bg-stone-700"
@@ -833,6 +835,7 @@ export default function App() {
                   <div key={sub.id} className="rm-card bg-white p-6 rounded-2xl border border-stone-200 shadow-sm flex justify-between items-center">
                     <div>
                       <h3 className="font-bold">{sub.name}</h3>
+                      {sub.owner_email && <p className="text-xs text-stone-400">Owner: {sub.owner_email}</p>}
                       <p className="text-sm text-stone-500">Updates every {sub.update_frequency_minutes} minutes</p>
                       <p className="text-xs text-stone-400">
                         {sub.last_success_at ? `Last success: ${new Date(sub.last_success_at).toLocaleString()}` : 'Not fetched yet'}
@@ -854,7 +857,13 @@ export default function App() {
                       <button
                         onClick={() => {
                           setEditingSubscription(sub);
-                          setSubscriptionForm({ name: sub.name, url: '', update_frequency_minutes: sub.update_frequency_minutes, enabled: !!sub.enabled });
+                          setSubscriptionForm({
+                            name: sub.name,
+                            url: '',
+                            owner_email: sub.owner_email || '',
+                            update_frequency_minutes: sub.update_frequency_minutes,
+                            enabled: !!sub.enabled,
+                          });
                           setShowSubscriptionForm(true);
                         }}
                         className="p-2 text-stone-500 hover:text-stone-900 hover:bg-stone-100 rounded-lg"
@@ -1299,6 +1308,17 @@ export default function App() {
                   onChange={e => setSubscriptionForm({ ...subscriptionForm, url: e.target.value })}
                 />
                 <p className="text-xs text-stone-500 mt-1">Secret subscription URLs are treated as credentials and stored encrypted.</p>
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-1">Owner email (for invite status matching)</label>
+                <input
+                  type="email"
+                  className="w-full px-3 py-2 border rounded-lg"
+                  placeholder="you@gmail.com"
+                  value={subscriptionForm.owner_email}
+                  onChange={e => setSubscriptionForm({ ...subscriptionForm, owner_email: e.target.value })}
+                />
+                <p className="text-xs text-stone-500 mt-1">For Google iCal feeds, this lets us match your attendee PARTSTAT only.</p>
               </div>
               <div>
                 <label className="block text-sm font-medium mb-1">Update frequency (minutes)</label>

@@ -9,6 +9,7 @@ import { traceConfig } from '../utils/traceConfig.js';
 type SubscriptionRow = {
   id: string;
   encrypted_url: string;
+  owner_email: string | null;
   update_frequency_minutes: number;
   enabled: number;
   last_etag: string | null;
@@ -76,19 +77,33 @@ export class SubscriptionService {
     return null;
   }
 
-  private extractParticipationStatus(componentLike: ICAL.Component | ICAL.Event | null | undefined): ParticipationStatus | null {
+  private normalizeEmail(value: string | null | undefined): string | null {
+    const raw = String(value || '').trim().toLowerCase();
+    if (!raw) return null;
+    return raw.startsWith('mailto:') ? raw.slice('mailto:'.length) : raw;
+  }
+
+  private extractParticipationStatus(
+    componentLike: ICAL.Component | ICAL.Event | null | undefined,
+    ownerEmail?: string | null,
+  ): ParticipationStatus | null {
     const component = this.toComponent(componentLike);
     if (!component) return null;
+    const owner = this.normalizeEmail(ownerEmail || null);
+    if (!owner) return null;
 
     const attendees = component.getAllProperties('attendee') || [];
-    const statuses = attendees
-      .map((attendee) => this.normalizeParticipationStatus(attendee.getParameter('partstat') as string | null | undefined))
-      .filter((v): v is ParticipationStatus => !!v);
+    for (const attendee of attendees) {
+      const attendeeRaw =
+        ((attendee as any).getFirstValue?.() as string | null | undefined)
+        || (((attendee as any).getValues?.() || [])[0] as string | undefined)
+        || null;
+      const attendeeEmail = this.normalizeEmail(attendeeRaw);
+      if (!attendeeEmail || attendeeEmail !== owner) continue;
 
-    if (statuses.includes('declined')) return 'declined';
-    if (statuses.includes('tentative')) return 'tentative';
-    if (statuses.includes('accepted')) return 'accepted';
-    if (statuses.includes('needs-action')) return 'needs-action';
+      const status = this.normalizeParticipationStatus(attendee.getParameter('partstat') as string | null | undefined);
+      if (status) return status;
+    }
 
     return null;
   }
@@ -250,6 +265,7 @@ export class SubscriptionService {
     body: string,
     rangeStart: Date,
     rangeEnd: Date,
+    ownerEmail?: string | null,
   ): Array<{
     uid: string;
     recurrenceId: string;
@@ -335,7 +351,7 @@ export class SubscriptionService {
         const description = this.getFirstPropertyValue(details.item, 'description') || descriptionFallback;
         const timezone = sourceTzid;
         const recurrenceId = this.recurrenceKey(details, sourceTzid);
-        const participationStatus = this.extractParticipationStatus(details.item) || this.extractParticipationStatus(event.component);
+        const participationStatus = this.extractParticipationStatus(details.item, ownerEmail) || this.extractParticipationStatus(event.component, ownerEmail);
 
         output.push({
           uid,
@@ -474,7 +490,7 @@ export class SubscriptionService {
 
   async fetchSubscription(subscriptionId: string, window: FetchWindow = {}): Promise<void> {
     const sub = db
-      .prepare('SELECT id, encrypted_url, update_frequency_minutes, enabled, last_etag, last_modified, last_body_hash FROM calendar_subscriptions WHERE id = ?')
+      .prepare('SELECT id, encrypted_url, owner_email, update_frequency_minutes, enabled, last_etag, last_modified, last_body_hash FROM calendar_subscriptions WHERE id = ?')
       .get(subscriptionId) as SubscriptionRow | undefined;
 
     if (!sub || !sub.enabled) return;
@@ -693,7 +709,7 @@ export class SubscriptionService {
               const description = this.getFirstPropertyValue(item, 'description') || descriptionFallback;
               const timezone = sourceTzid;
               const recurrenceId = this.recurrenceKey(details, sourceTzid);
-              const participationStatus = this.extractParticipationStatus(item) || this.extractParticipationStatus(event.component);
+              const participationStatus = this.extractParticipationStatus(item, sub.owner_email) || this.extractParticipationStatus(event.component, sub.owner_email);
 
               upsert.run(
                 subscriptionId,
@@ -759,7 +775,7 @@ export class SubscriptionService {
             descriptionFallback,
             event.startDate.isDate ? 1 : 0,
             sourceTzid,
-            this.extractParticipationStatus(vevent),
+            this.extractParticipationStatus(vevent, sub.owner_email),
             seenAt,
           );
 

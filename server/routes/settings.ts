@@ -19,6 +19,12 @@ import {
 const router = express.Router();
 const caldavService = new CalDavService();
 
+function normalizeOwnerEmail(value: string | null | undefined): string | null {
+  const raw = (value || '').trim().toLowerCase();
+  if (!raw) return null;
+  return raw.startsWith('mailto:') ? raw.slice('mailto:'.length) : raw;
+}
+
 function todayRange() {
   const now = new Date();
   const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
@@ -39,7 +45,7 @@ router.get('/', (req, res) => {
 // List ICS subscriptions (URL is secret, never returned)
 router.get('/subscriptions', (req, res) => {
   const subscriptions = db.prepare(`
-    SELECT id, name, update_frequency_minutes, enabled, last_fetched_at, last_success_at, last_error, created_at
+    SELECT id, name, owner_email, update_frequency_minutes, enabled, last_fetched_at, last_success_at, last_error, created_at
     FROM calendar_subscriptions
     ORDER BY created_at DESC
   `).all();
@@ -189,14 +195,15 @@ router.post('/subscriptions', (req, res) => {
 
     const name = requireString(req.body.name, 'name');
     const url = requireString(req.body.url, 'url');
+    const ownerEmail = normalizeOwnerEmail(optionalString(req.body.owner_email, 'owner_email'));
     const update_frequency_minutes = optionalInteger(req.body.update_frequency_minutes, 'update_frequency_minutes', 15, 1440) || 30;
     const enabled = optionalBoolean(req.body.enabled, 'enabled');
     const id = uuidv4();
 
     db.prepare(`
-      INSERT INTO calendar_subscriptions (id, name, encrypted_url, update_frequency_minutes, enabled)
-      VALUES (?, ?, ?, ?, ?)
-    `).run(id, name, encrypt(url), update_frequency_minutes, enabled === false ? 0 : 1);
+      INSERT INTO calendar_subscriptions (id, name, encrypted_url, owner_email, update_frequency_minutes, enabled)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(id, name, encrypt(url), ownerEmail, update_frequency_minutes, enabled === false ? 0 : 1);
 
     res.json({ id, message: 'Subscription created' });
   } catch (err: any) {
@@ -220,21 +227,22 @@ router.put('/subscriptions/:id', (req, res) => {
 
     const name = requireString(req.body.name, 'name');
     const url = optionalString(req.body.url, 'url');
+    const ownerEmail = normalizeOwnerEmail(optionalString(req.body.owner_email, 'owner_email'));
     const update_frequency_minutes = optionalInteger(req.body.update_frequency_minutes, 'update_frequency_minutes', 15, 1440) || 30;
     const enabled = optionalBoolean(req.body.enabled, 'enabled');
 
     if (url) {
       db.prepare(`
         UPDATE calendar_subscriptions
-        SET name = ?, encrypted_url = ?, update_frequency_minutes = ?, enabled = ?
+        SET name = ?, encrypted_url = ?, owner_email = ?, update_frequency_minutes = ?, enabled = ?
         WHERE id = ?
-      `).run(name, encrypt(url), update_frequency_minutes, enabled === false ? 0 : 1, id);
+      `).run(name, encrypt(url), ownerEmail, update_frequency_minutes, enabled === false ? 0 : 1, id);
     } else {
       db.prepare(`
         UPDATE calendar_subscriptions
-        SET name = ?, update_frequency_minutes = ?, enabled = ?
+        SET name = ?, owner_email = ?, update_frequency_minutes = ?, enabled = ?
         WHERE id = ?
-      `).run(name, update_frequency_minutes, enabled === false ? 0 : 1, id);
+      `).run(name, ownerEmail, update_frequency_minutes, enabled === false ? 0 : 1, id);
     }
 
     res.json({ message: 'Subscription updated' });
