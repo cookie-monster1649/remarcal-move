@@ -803,6 +803,11 @@ export class PDFService {
                 const eventBoxH = 5;
                 const eventBottomLimit = y + cellH - 1;
                 const maxRows = Math.max(0, Math.floor((eventBottomLimit - eventStartY - eventBoxH) / eventStep) + 1);
+
+                // IMPORTANT: set weekly event font before measuring/truncating labels.
+                // cutToFit() relies on current jsPDF font metrics.
+                doc.setFontSize(6);
+                doc.setFont("helvetica", "normal");
                 const eventRows = [
                   ...allDayEvents.map((e) => ({ event: e, label: cutToFit(e.summary, eventLabelMaxW) })),
                   ...timedEvents.map((e) => {
@@ -813,8 +818,6 @@ export class PDFService {
                 const hasOverflow = eventRows.length > maxRows;
                 const normalRows = hasOverflow ? Math.max(0, maxRows - 1) : maxRows;
 
-                 doc.setFontSize(6);
-                 doc.setFont("helvetica", "normal");
                  doc.setTextColor(0);
                 eventRows.slice(0, normalRows).forEach((row) => {
                     if (isDeclinedEvent(row.event)) setDotted();
