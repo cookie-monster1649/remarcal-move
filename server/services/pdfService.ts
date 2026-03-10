@@ -11,6 +11,7 @@ export interface CalendarEvent {
   location?: string;
   allDay?: boolean;
   timezone?: string;
+  participationStatus?: 'accepted' | 'declined' | 'tentative' | 'needs-action';
 }
 
 export interface PDFConfig {
@@ -203,6 +204,15 @@ export class PDFService {
     const isAllDayEvent = (e: CalendarEvent) => {
       const duration = e.end.getTime() - e.start.getTime();
       return !!e.allDay || (duration >= 86400000 && isMidnightInTz(e.start) && isMidnightInTz(e.end));
+    };
+
+    const isDeclinedEvent = (e: CalendarEvent) => (e.participationStatus || '').toLowerCase() === 'declined';
+
+    const setDotted = () => {
+      (doc as any).setLineDashPattern?.([0.6, 0.8], 0);
+    };
+    const resetDotted = () => {
+      (doc as any).setLineDashPattern?.([], 0);
     };
 
     const doc = new jsPDF({
@@ -562,8 +572,14 @@ export class PDFService {
                 doc.setTextColor(0);
                 dayEvents.slice(0, 4).forEach(e => {
                     const summary = cutToFit(e.summary, cellW - 4);
+                    if (isDeclinedEvent(e)) setDotted();
                     doc.roundedRect(x + 1, eventY, cellW - 2, 3, 1, 1, 'S');
+                    if (isDeclinedEvent(e)) resetDotted();
                     doc.text(summary, x + 2, eventY + 2);
+                    if (isDeclinedEvent(e)) {
+                      doc.setLineWidth(0.1);
+                      doc.line(x + 1.5, eventY + 1.5, x + cellW - 1.5, eventY + 1.5);
+                    }
                     eventY += 4;
                 });
             });
@@ -712,8 +728,14 @@ export class PDFService {
                  allDayEvents.forEach(e => {
                      if (eventY < y + cellH - 5) {
                          const summary = cutToFit(e.summary, cellW - 7);
+                        if (isDeclinedEvent(e)) setDotted();
                          doc.roundedRect(x + 2, eventY, cellW - 4, 5, 1, 1, 'S');
+                        if (isDeclinedEvent(e)) resetDotted();
                          doc.text(summary, x + 3, eventY + 3.5);
+                        if (isDeclinedEvent(e)) {
+                          doc.setLineWidth(0.1);
+                          doc.line(x + 2.5, eventY + 2.5, x + cellW - 2.5, eventY + 2.5);
+                        }
                          eventY += 6;
                      }
                  });
@@ -721,8 +743,14 @@ export class PDFService {
                      if (eventY < y + cellH - 5) {
                          const time = getTzTimeStr(e.start);
                          const summary = cutToFit(e.summary, cellW - 12);
+                        if (isDeclinedEvent(e)) setDotted();
                          doc.roundedRect(x + 2, eventY, cellW - 4, 5, 1, 1, 'S');
+                        if (isDeclinedEvent(e)) resetDotted();
                          doc.text(`${time} ${summary}`, x + 3, eventY + 3.5);
+                        if (isDeclinedEvent(e)) {
+                          doc.setLineWidth(0.1);
+                          doc.line(x + 2.5, eventY + 2.5, x + cellW - 2.5, eventY + 2.5);
+                        }
                          eventY += 6;
                      }
                  });
@@ -813,10 +841,16 @@ export class PDFService {
             doc.setFillColor(245, 245, 245);
             doc.setDrawColor(100);
             doc.setLineWidth(0.1);
+            if (isDeclinedEvent(e)) setDotted();
             doc.roundedRect(adX, contentY + 2, textW, 6, 1, 1, 'FD');
+            if (isDeclinedEvent(e)) resetDotted();
             
             doc.setTextColor(0);
             doc.text(summary, adX + 2, contentY + 6);
+            if (isDeclinedEvent(e)) {
+              doc.setLineWidth(0.1);
+              doc.line(adX + 1, contentY + 5, adX + textW - 1, contentY + 5);
+            }
             adX += textW + 2; 
         });
         
@@ -1037,7 +1071,9 @@ export class PDFService {
                 doc.setFillColor(245, 245, 245);
                 doc.setDrawColor(100);
                 doc.setLineWidth(0.1);
+                if (isDeclinedEvent(item.event)) setDotted();
                 doc.roundedRect(x, y, rectW, h, 1, 1, 'FD');
+                if (isDeclinedEvent(item.event)) resetDotted();
 
                 doc.setTextColor(0);
                 
@@ -1091,6 +1127,12 @@ export class PDFService {
                 }
                 
                 doc.text(textLines, x + 2, textY);
+
+                if (isDeclinedEvent(item.event)) {
+                    const strikeY = y + Math.max(1.5, h * 0.45);
+                    doc.setLineWidth(0.15);
+                    doc.line(x + 1, strikeY, x + rectW - 1, strikeY);
+                }
 
                 if (hasLocation) {
                     locationsForNotes.push({ summary: item.event.summary, location: item.event.location! });

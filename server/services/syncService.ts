@@ -113,7 +113,7 @@ export class SyncService {
       }
 
       const subEvents = db.prepare(`
-        SELECT summary, start_at, end_at, location, description, all_day, timezone
+        SELECT summary, start_at, end_at, location, description, all_day, timezone, participation_status
         FROM subscription_events
         WHERE subscription_id = ? AND end_at >= ? AND start_at <= ?
       `).all(subscription.id, `${startDate}T00:00:00.000Z`, `${endDate}T23:59:59.999Z`) as any[];
@@ -144,6 +144,7 @@ export class SyncService {
           description: event.description || undefined,
           allDay: !!event.all_day,
           timezone: event.timezone || undefined,
+          participationStatus: event.participation_status || undefined,
         });
       }
     }

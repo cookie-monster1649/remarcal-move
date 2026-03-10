@@ -113,6 +113,7 @@ export function initDb() {
       description TEXT,
       all_day INTEGER DEFAULT 0,
       timezone TEXT,
+      participation_status TEXT,
       last_seen_at TEXT NOT NULL,
       PRIMARY KEY (subscription_id, uid, recurrence_id),
       FOREIGN KEY (subscription_id) REFERENCES calendar_subscriptions(id) ON DELETE CASCADE
@@ -234,6 +235,13 @@ export function initDb() {
         FOREIGN KEY (subscription_id) REFERENCES calendar_subscriptions(id) ON DELETE CASCADE
       )
     `);
+  }
+
+  const subscriptionEventsTableInfo = db.prepare("PRAGMA table_info(subscription_events)").all() as any[];
+  const hasParticipationStatus = subscriptionEventsTableInfo.some(col => col.name === 'participation_status');
+  if (!hasParticipationStatus) {
+    console.log('Migrating subscription_events: adding participation_status column');
+    db.exec('ALTER TABLE subscription_events ADD COLUMN participation_status TEXT');
   }
 
   // Repair stale foreign keys left behind by old migrations where documents table was renamed.

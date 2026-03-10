@@ -21,6 +21,8 @@ type FetchWindow = {
   rangeEnd?: Date;
 };
 
+type ParticipationStatus = 'accepted' | 'declined' | 'tentative' | 'needs-action';
+
 export class SubscriptionService {
   private readonly minFrequencyMinutes = 15;
 
@@ -62,6 +64,33 @@ export class SubscriptionService {
   private isCancelled(componentLike: ICAL.Component | ICAL.Event | null | undefined): boolean {
     const status = this.getFirstPropertyValue(componentLike, 'status')?.toUpperCase();
     return status === 'CANCELLED' || status === 'CANCELED';
+  }
+
+  private normalizeParticipationStatus(value: string | null | undefined): ParticipationStatus | null {
+    const normalized = String(value || '').trim().toUpperCase();
+    if (!normalized) return null;
+    if (normalized === 'ACCEPTED') return 'accepted';
+    if (normalized === 'DECLINED') return 'declined';
+    if (normalized === 'TENTATIVE') return 'tentative';
+    if (normalized === 'NEEDS-ACTION' || normalized === 'NEEDSACTION') return 'needs-action';
+    return null;
+  }
+
+  private extractParticipationStatus(componentLike: ICAL.Component | ICAL.Event | null | undefined): ParticipationStatus | null {
+    const component = this.toComponent(componentLike);
+    if (!component) return null;
+
+    const attendees = component.getAllProperties('attendee') || [];
+    const statuses = attendees
+      .map((attendee) => this.normalizeParticipationStatus(attendee.getParameter('partstat') as string | null | undefined))
+      .filter((v): v is ParticipationStatus => !!v);
+
+    if (statuses.includes('declined')) return 'declined';
+    if (statuses.includes('tentative')) return 'tentative';
+    if (statuses.includes('accepted')) return 'accepted';
+    if (statuses.includes('needs-action')) return 'needs-action';
+
+    return null;
   }
 
   private linkedDocumentsWindow(subscriptionId: string): { start: Date; end: Date } | null {
@@ -231,6 +260,7 @@ export class SubscriptionService {
     description: string | null;
     allDay: boolean;
     timezone: string | null;
+    participationStatus: ParticipationStatus | null;
   }> {
     const parsed = ICAL.parse(body);
     const vcal = new ICAL.Component(parsed);
@@ -305,6 +335,7 @@ export class SubscriptionService {
         const description = this.getFirstPropertyValue(details.item, 'description') || descriptionFallback;
         const timezone = sourceTzid;
         const recurrenceId = this.recurrenceKey(details, sourceTzid);
+        const participationStatus = this.extractParticipationStatus(details.item) || this.extractParticipationStatus(event.component);
 
         output.push({
           uid,
@@ -316,6 +347,7 @@ export class SubscriptionService {
           description,
           allDay: details.startDate.isDate,
           timezone,
+          participationStatus,
         });
       };
 
@@ -392,6 +424,7 @@ export class SubscriptionService {
           description: null,
           allDay: false,
           timezone: null,
+          participationStatus: null,
         });
       });
     }
@@ -576,8 +609,8 @@ export class SubscriptionService {
       const upsert = db.prepare(`
         INSERT INTO subscription_events (
           subscription_id, uid, recurrence_id, summary, start_at, end_at,
-          location, description, all_day, timezone, last_seen_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          location, description, all_day, timezone, participation_status, last_seen_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(subscription_id, uid, recurrence_id) DO UPDATE SET
           summary = excluded.summary,
           start_at = excluded.start_at,
@@ -586,6 +619,7 @@ export class SubscriptionService {
           description = excluded.description,
           all_day = excluded.all_day,
           timezone = excluded.timezone,
+          participation_status = excluded.participation_status,
           last_seen_at = excluded.last_seen_at
       `);
 
@@ -659,6 +693,7 @@ export class SubscriptionService {
               const description = this.getFirstPropertyValue(item, 'description') || descriptionFallback;
               const timezone = sourceTzid;
               const recurrenceId = this.recurrenceKey(details, sourceTzid);
+              const participationStatus = this.extractParticipationStatus(item) || this.extractParticipationStatus(event.component);
 
               upsert.run(
                 subscriptionId,
@@ -671,6 +706,7 @@ export class SubscriptionService {
                 description,
                 details.startDate.isDate ? 1 : 0,
                 timezone,
+                participationStatus,
                 seenAt,
               );
 
@@ -723,6 +759,7 @@ export class SubscriptionService {
             descriptionFallback,
             event.startDate.isDate ? 1 : 0,
             sourceTzid,
+            this.extractParticipationStatus(vevent),
             seenAt,
           );
 
@@ -759,6 +796,7 @@ export class SubscriptionService {
               null,
               null,
               0,
+              null,
               null,
               seenAt,
             );
