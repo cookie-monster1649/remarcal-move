@@ -5,6 +5,7 @@ import { buildBackupManifest } from './backupManifest.js';
 import { cleanupBackupsForDevice } from './backupRetention.js';
 import { deviceOperationService } from './deviceOperationService.js';
 import { infoLogService } from './infoLogService.js';
+import { sshKeyManager } from './sshKeyManager.js';
 import { v4 as uuidv4 } from 'uuid';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -50,7 +51,8 @@ function getDataDir(): string {
 }
 
 function buildDeviceSshConfig(device: any) {
-  const decryptedPrivateKey = device.encrypted_private_key ? decrypt(device.encrypted_private_key) : undefined;
+  const fsPrivateKey = sshKeyManager.loadDevicePrivateKey(device.id);
+  const decryptedPrivateKey = fsPrivateKey || (device.encrypted_private_key ? decrypt(device.encrypted_private_key) : undefined);
   const decryptedPassword = device.encrypted_password ? decrypt(device.encrypted_password) : undefined;
   const authMode = device.auth_mode || 'password';
 

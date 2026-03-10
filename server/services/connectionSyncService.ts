@@ -1,13 +1,15 @@
 import db from '../db.js';
 import { decrypt } from './encryptionService.js';
 import { SSHService } from './sshService.js';
+import { sshKeyManager } from './sshKeyManager.js';
 import { SyncService } from './syncService.js';
 import { backupService } from './backupService.js';
 
 const POLL_INTERVAL_MS = 5 * 60 * 1000;
 
 function buildDeviceSshConfig(device: any) {
-  const decryptedPrivateKey = device.encrypted_private_key ? decrypt(device.encrypted_private_key) : undefined;
+  const fsPrivateKey = sshKeyManager.loadDevicePrivateKey(device.id);
+  const decryptedPrivateKey = fsPrivateKey || (device.encrypted_private_key ? decrypt(device.encrypted_private_key) : undefined);
   const decryptedPassword = device.encrypted_password ? decrypt(device.encrypted_password) : undefined;
   const authMode = device.auth_mode || 'password';
 

@@ -2,6 +2,7 @@ import express from 'express';
 import db from '../db.js';
 import { encrypt, decrypt } from '../services/encryptionService.js';
 import { SSHService } from '../services/sshService.js';
+import { sshKeyManager } from '../services/sshKeyManager.js';
 import { v4 as uuidv4 } from 'uuid';
 import {
   getErrorMessage,
@@ -36,7 +37,9 @@ function toPublicDeviceRow(row: any) {
 
 function buildSshConfigFromDevice(device: any, override?: { password?: string; privateKey?: string }) {
   const authMode = device.auth_mode || 'password';
-  const decryptedPrivateKey = override?.privateKey ?? (device.encrypted_private_key ? decrypt(device.encrypted_private_key) : undefined);
+  const fsPrivateKey = sshKeyManager.loadDevicePrivateKey(device.id);
+  const dbPrivateKey = device.encrypted_private_key ? decrypt(device.encrypted_private_key) : undefined;
+  const decryptedPrivateKey = override?.privateKey ?? fsPrivateKey ?? dbPrivateKey;
   const decryptedPassword = override?.password ?? (device.encrypted_password ? decrypt(device.encrypted_password) : undefined);
 
   return {
@@ -135,7 +138,8 @@ router.put('/:id', async (req, res) => {
     const allow_password_fallback = optionalBoolean(req.body.allow_password_fallback, 'allow_password_fallback');
 
     const passwordToUse = password ?? (existing.encrypted_password ? decrypt(existing.encrypted_password) : undefined);
-    if (!passwordToUse && !existing.encrypted_private_key) {
+    const hasKeyAuthMaterial = !!sshKeyManager.loadDevicePrivateKey(existing.id) || !!existing.encrypted_private_key;
+    if (!passwordToUse && !hasKeyAuthMaterial) {
       return res.status(400).json({ error: 'No valid authentication available for connection test' });
     }
 
@@ -284,22 +288,22 @@ router.post('/:id/enroll-key', async (req, res) => {
       trustOnFirstUse: !device.host_key_fingerprint,
     });
     await verify.testConnection();
+    sshKeyManager.storeDeviceKeyPair(id, keyPair.privateKey, keyPair.publicKey);
 
     const pinnedFingerprint = device.host_key_fingerprint || bootstrap.getObservedHostKeyFingerprint() || verify.getObservedHostKeyFingerprint();
 
     db.prepare(`
       UPDATE devices
       SET auth_mode = 'key',
-          encrypted_private_key = ?,
+          encrypted_private_key = NULL,
+          encrypted_password = NULL,
           public_key = ?,
           host_key_fingerprint = ?,
-          allow_password_fallback = ?
+          allow_password_fallback = 0
       WHERE id = ?
     `).run(
-      encrypt(keyPair.privateKey),
       keyPair.publicKey,
       pinnedFingerprint,
-      device.allow_password_fallback ? 1 : 0,
       id,
     );
 
@@ -325,7 +329,7 @@ router.post('/:id/auth-mode', (req, res) => {
 
     const device = db.prepare('SELECT * FROM devices WHERE id = ?').get(id) as any;
     if (!device) return res.status(404).json({ error: 'Device not found' });
-    if (mode === 'key' && !device.encrypted_private_key) {
+    if (mode === 'key' && !device.encrypted_private_key && !sshKeyManager.hasDevicePrivateKey(id)) {
       return res.status(400).json({ error: 'Device has no enrolled key' });
     }
 

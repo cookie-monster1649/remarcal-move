@@ -3,6 +3,7 @@ import { CalDavService } from './caldavService.js';
 import { PDFService } from './pdfService.js';
 import { SSHService } from './sshService.js';
 import { decrypt } from './encryptionService.js';
+import { sshKeyManager } from './sshKeyManager.js';
 import { subscriptionService } from './subscriptionService.js';
 import { deviceOperationService } from './deviceOperationService.js';
 import { infoLogService } from './infoLogService.js';
@@ -22,7 +23,8 @@ function traceLog(message: string, payload?: Record<string, unknown>) {
 }
 
 function buildDeviceSshConfig(device: any) {
-  const decryptedPrivateKey = device.encrypted_private_key ? decrypt(device.encrypted_private_key) : undefined;
+  const fsPrivateKey = sshKeyManager.loadDevicePrivateKey(device.id);
+  const decryptedPrivateKey = fsPrivateKey || (device.encrypted_private_key ? decrypt(device.encrypted_private_key) : undefined);
   const decryptedPassword = device.encrypted_password ? decrypt(device.encrypted_password) : undefined;
   const authMode = device.auth_mode || 'password';
 
