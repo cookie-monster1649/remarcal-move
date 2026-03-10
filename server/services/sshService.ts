@@ -1,4 +1,4 @@
-he import * as ssh2 from 'ssh2';
+import * as ssh2 from 'ssh2';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
