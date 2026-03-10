@@ -753,8 +753,8 @@ export class PDFService {
                  dayMeta.push({ index: i, x, y, w: cellW, h: cellH, date: d });
 
                  // Weekly cell event geometry (single source of truth)
-                 const eventBoxInsetX = 1.2;
-                 const eventTextInsetX = 0.6;
+                 const eventBoxInsetX = 0.8;
+                 const eventTextInsetX = 0.35;
                  const eventBoxX = x + eventBoxInsetX;
                  const eventBoxW = cellW - eventBoxInsetX * 2;
                  const eventTextX = eventBoxX + eventTextInsetX;

@@ -1,4 +1,4 @@
-import * as ssh2 from 'ssh2';
+he import * as ssh2 from 'ssh2';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
@@ -331,10 +331,12 @@ export class SSHService {
 
       if (isFile) {
         const remoteSize = entry.attrs?.size || 0;
+        const remoteMtimeMs = (entry.attrs?.mtime || 0) * 1000;
         let skipExisting = false;
         try {
           const localStat = fs.statSync(localPath);
-          if (localStat.isFile() && localStat.size === remoteSize) {
+          const mtimeMatches = remoteMtimeMs <= 0 || Math.abs(localStat.mtimeMs - remoteMtimeMs) < 1000;
+          if (localStat.isFile() && localStat.size === remoteSize && mtimeMatches) {
             skipExisting = true;
           }
         } catch {
@@ -361,6 +363,14 @@ export class SSHService {
             resolve();
           });
         });
+
+        if (remoteMtimeMs > 0) {
+          try {
+            fs.utimesSync(localPath, new Date(), new Date(remoteMtimeMs));
+          } catch {
+            // ignore local timestamp update failures
+          }
+        }
 
         state && (state.transferred += remoteSize);
         options?.onProgress?.({

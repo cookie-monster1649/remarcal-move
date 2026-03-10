@@ -44,7 +44,47 @@ function buildDeviceSshConfig(device: any) {
   };
 }
 
+const queuedSyncByDevice = new Map<string, Set<string>>();
+const queuedSyncTimers = new Map<string, NodeJS.Timeout>();
+
 export class SyncService {
+  private queueSync(deviceId: string, docId: string): void {
+    const existing = queuedSyncByDevice.get(deviceId) || new Set<string>();
+    existing.add(docId);
+    queuedSyncByDevice.set(deviceId, existing);
+  }
+
+  private scheduleQueuedSyncAttempt(deviceId: string): void {
+    if (queuedSyncTimers.has(deviceId)) return;
+    const timer = setTimeout(async () => {
+      queuedSyncTimers.delete(deviceId);
+      await this.runQueuedSyncs(deviceId);
+    }, 1500);
+    queuedSyncTimers.set(deviceId, timer);
+  }
+
+  private async runQueuedSyncs(deviceId: string): Promise<void> {
+    const queued = queuedSyncByDevice.get(deviceId);
+    if (!queued || queued.size === 0) return;
+
+    const lock = deviceOperationService.getCurrent(deviceId);
+    if (lock?.operation === 'backup') {
+      this.scheduleQueuedSyncAttempt(deviceId);
+      return;
+    }
+
+    const docIds = Array.from(queued);
+    queuedSyncByDevice.delete(deviceId);
+
+    for (const docId of docIds) {
+      try {
+        await this.syncDocument(docId);
+      } catch {
+        // syncDocument handles status/logging; keep queue flow resilient
+      }
+    }
+  }
+
   async generateDocumentPDF(docId: string) {
     const doc = db.prepare('SELECT * FROM documents WHERE id = ?').get(docId) as any;
     if (!doc) throw new Error(`Document ${docId} not found`);
@@ -208,6 +248,15 @@ export class SyncService {
 
       const lock = deviceOperationService.tryAcquire(device.id, 'sync');
       if (lock.ok === false) {
+        const busyWithBackup = lock.reason.includes('backup');
+        if (busyWithBackup) {
+          this.queueSync(device.id, docId);
+          db.prepare('UPDATE documents SET sync_status = ?, last_error = NULL WHERE id = ?').run('queued', docId);
+          infoLogService.write('sync.queued', { docId, deviceId: device.id, reason: lock.reason }, 'info');
+          this.scheduleQueuedSyncAttempt(device.id);
+          return;
+        }
+
         infoLogService.write('sync.skipped', { docId, deviceId: device.id, reason: 'device_busy', detail: lock.reason }, 'warn');
         const err: any = new Error(lock.reason);
         err.syncSkipped = true;
@@ -231,6 +280,7 @@ export class SyncService {
         infoLogService.write('sync.completed', { docId, deviceId: device.id, at: completedAt });
       } finally {
         deviceOperationService.release(device.id, 'sync');
+        this.scheduleQueuedSyncAttempt(device.id);
       }
 
     } catch (error: any) {

@@ -10,6 +10,11 @@ router.post('/device/:id', async (req, res) => {
   try {
     const { id } = req.params;
     const out = await backupService.startDeviceBackup(id);
+    if (out.queued) {
+      return res.status(202).json({
+        message: 'Backup queued',
+      });
+    }
     res.status(202).json({
       message: 'Backup started',
       backupId: out.backupId,

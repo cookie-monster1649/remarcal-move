@@ -14,6 +14,8 @@ const XOCHITL_REMOTE_PATH = '/home/root/.local/share/remarkable/xochitl/';
 
 const runningByDevice = new Set<string>();
 const cancelRequested = new Set<string>();
+const queuedBackupByDevice = new Set<string>();
+const queuedBackupTimers = new Map<string, NodeJS.Timeout>();
 
 export interface BackupProgressState {
   backupId: string;
@@ -100,6 +102,32 @@ function buildDeviceSshConfig(device: any) {
 }
 
 export class BackupService {
+  private scheduleQueuedBackupAttempt(deviceId: string): void {
+    if (queuedBackupTimers.has(deviceId)) return;
+    const timer = setTimeout(async () => {
+      queuedBackupTimers.delete(deviceId);
+      await this.runQueuedBackup(deviceId);
+    }, 1500);
+    queuedBackupTimers.set(deviceId, timer);
+  }
+
+  private async runQueuedBackup(deviceId: string): Promise<void> {
+    if (!queuedBackupByDevice.has(deviceId)) return;
+    const current = deviceOperationService.getCurrent(deviceId);
+    if (current?.operation === 'sync' || current?.operation === 'backup') {
+      this.scheduleQueuedBackupAttempt(deviceId);
+      return;
+    }
+
+    queuedBackupByDevice.delete(deviceId);
+    try {
+      await this.startDeviceBackup(deviceId);
+    } catch {
+      queuedBackupByDevice.add(deviceId);
+      this.scheduleQueuedBackupAttempt(deviceId);
+    }
+  }
+
   getBackupProgress(backupId: string): BackupProgressState | null {
     return progressByBackupId.get(backupId) || null;
   }
@@ -117,7 +145,7 @@ export class BackupService {
     infoLogService.write('backup.cancel_requested', { backupId }, 'warn');
   }
 
-  async startDeviceBackup(deviceId: string): Promise<{ backupId: string }> {
+  async startDeviceBackup(deviceId: string): Promise<{ backupId?: string; queued?: boolean }> {
     const device = db.prepare('SELECT * FROM devices WHERE id = ?').get(deviceId) as any;
     if (!device) {
       infoLogService.write('backup.skipped', { deviceId, reason: 'device_not_found' }, 'warn');
@@ -131,6 +159,13 @@ export class BackupService {
 
     const lock = deviceOperationService.tryAcquire(deviceId, 'backup');
     if (lock.ok === false) {
+      const busyWithSync = lock.reason.includes('sync');
+      if (busyWithSync) {
+        queuedBackupByDevice.add(deviceId);
+        infoLogService.write('backup.queued', { deviceId, reason: lock.reason }, 'info');
+        this.scheduleQueuedBackupAttempt(deviceId);
+        return { queued: true };
+      }
       infoLogService.write('backup.skipped', { deviceId, reason: 'device_busy', detail: lock.reason }, 'warn');
       throw new Error(lock.reason);
     }
@@ -153,6 +188,7 @@ export class BackupService {
         runningByDevice.delete(deviceId);
         cancelRequested.delete(backupId);
         deviceOperationService.release(deviceId, 'backup');
+        this.scheduleQueuedBackupAttempt(deviceId);
       });
 
     return { backupId };
