@@ -2,6 +2,8 @@ import * as ssh2 from 'ssh2';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
+import * as os from 'os';
+import { spawn } from 'child_process';
 
 export interface SSHConfig {
   host: string;
@@ -121,6 +123,147 @@ export class SSHService {
 
   private shellEscapeSingleArg(arg: string): string {
     return `'${arg.replace(/'/g, `'"'"'`)}'`;
+  }
+
+  private async withSftp<T>(fn: (conn: ssh2.Client, sftp: ssh2.SFTPWrapper) => Promise<T>): Promise<T> {
+    const conn = await this.connect();
+    return new Promise<T>((resolve, reject) => {
+      conn.sftp((err, sftp) => {
+        if (err) {
+          conn.end();
+          reject(err);
+          return;
+        }
+
+        fn(conn, sftp)
+          .then((result) => {
+            conn.end();
+            resolve(result);
+          })
+          .catch((error) => {
+            conn.end();
+            reject(error);
+          });
+      });
+    });
+  }
+
+  private async commandExists(command: string): Promise<boolean> {
+    return new Promise<boolean>((resolve) => {
+      const child = spawn(command, ['--version'], { stdio: 'ignore' });
+      child.on('error', () => resolve(false));
+      child.on('close', (code) => resolve(code === 0));
+    });
+  }
+
+  private async runCommand(command: string, args: string[]): Promise<void> {
+    await new Promise<void>((resolve, reject) => {
+      const child = spawn(command, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+      let stderr = '';
+
+      child.stderr.on('data', (chunk) => {
+        stderr += chunk.toString();
+      });
+
+      child.on('error', reject);
+      child.on('close', (code) => {
+        if (code === 0) {
+          resolve();
+          return;
+        }
+        reject(new Error(stderr.trim() || `${command} exited with code ${code}`));
+      });
+    });
+  }
+
+  private async downloadDirectoryRecursiveSftp(sftp: ssh2.SFTPWrapper, remoteDir: string, localDir: string): Promise<void> {
+    fs.mkdirSync(localDir, { recursive: true });
+
+    const entries = await new Promise<ssh2.FileEntry[]>((resolve, reject) => {
+      sftp.readdir(remoteDir, (err, list) => {
+        if (err) {
+          reject(err);
+          return;
+        }
+        resolve(list || []);
+      });
+    });
+
+    for (const entry of entries) {
+      if (!entry?.filename || entry.filename === '.' || entry.filename === '..') continue;
+      const remotePath = path.posix.join(remoteDir, entry.filename);
+      const localPath = path.join(localDir, entry.filename);
+
+      const mode = entry.attrs?.mode || 0;
+      const isDir = (mode & 0o170000) === 0o040000;
+      const isFile = (mode & 0o170000) === 0o100000;
+
+      if (isDir) {
+        await this.downloadDirectoryRecursiveSftp(sftp, remotePath, localPath);
+        continue;
+      }
+
+      if (isFile) {
+        await new Promise<void>((resolve, reject) => {
+          sftp.fastGet(remotePath, localPath, (err) => {
+            if (err) {
+              reject(err);
+              return;
+            }
+            resolve();
+          });
+        });
+      }
+    }
+  }
+
+  async snapshotXochitlDirectory(remoteDir: string, localDir: string): Promise<{ method: 'rsync' | 'sftp' }> {
+    fs.mkdirSync(localDir, { recursive: true });
+
+    const cfg = this.getConfig();
+    const canUseRsync = await this.commandExists('rsync');
+    if (canUseRsync && cfg.privateKey) {
+      const keyFile = path.join(os.tmpdir(), `remarcal-key-${Date.now()}-${Math.random().toString(36).slice(2)}.pem`);
+      fs.writeFileSync(keyFile, cfg.privateKey, { mode: 0o600 });
+
+      try {
+        const sshCmd = [
+          'ssh',
+          '-i', keyFile,
+          '-p', String(cfg.port),
+          '-o', 'BatchMode=yes',
+          '-o', 'StrictHostKeyChecking=accept-new',
+          '-o', 'UserKnownHostsFile=/dev/null',
+        ].join(' ');
+
+        const normalizedRemote = remoteDir.endsWith('/') ? remoteDir : `${remoteDir}/`;
+        const normalizedLocal = localDir.endsWith(path.sep) ? localDir : `${localDir}${path.sep}`;
+
+        await this.runCommand('rsync', [
+          '-az',
+          '--delete',
+          '-e', sshCmd,
+          `${cfg.username}@${cfg.host}:${normalizedRemote}`,
+          normalizedLocal,
+        ]);
+
+        return { method: 'rsync' };
+      } catch (err) {
+        console.warn('rsync snapshot failed, falling back to SFTP recursive copy:', err);
+      } finally {
+        try {
+          fs.unlinkSync(keyFile);
+        } catch {
+          // no-op
+        }
+      }
+    }
+
+    await this.withSftp(async (_conn, sftp) => {
+      await this.downloadDirectoryRecursiveSftp(sftp, remoteDir, localDir);
+    });
+
+    return { method: 'sftp' };
   }
 
   async installPublicKey(publicKey: string): Promise<void> {

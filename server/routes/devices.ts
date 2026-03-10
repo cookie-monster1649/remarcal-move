@@ -23,6 +23,9 @@ function toPublicDeviceRow(row: any) {
     username: row.username,
     port: row.port,
     sync_when_connected: row.sync_when_connected,
+    backup_enabled: row.backup_enabled ? 1 : 0,
+    backup_frequency_hours: row.backup_frequency_hours || 24,
+    last_backup_at: row.last_backup_at || null,
     last_connected_at: row.last_connected_at,
     created_at: row.created_at,
     auth_mode: row.auth_mode || 'password',
@@ -66,6 +69,8 @@ router.post('/', async (req, res) => {
     const username = requireString(req.body.username, 'username');
     const password = optionalString(req.body.password, 'password');
     const sync_when_connected = optionalBoolean(req.body.sync_when_connected, 'sync_when_connected') || false;
+    const backup_enabled = optionalBoolean(req.body.backup_enabled, 'backup_enabled') || false;
+    const backup_frequency_hours = optionalInteger(req.body.backup_frequency_hours, 'backup_frequency_hours', 1, 24 * 30) || 24;
     const port = optionalInteger(req.body.port, 'port', 1, 65535) || 22;
     const allow_password_fallback = optionalBoolean(req.body.allow_password_fallback, 'allow_password_fallback');
 
@@ -85,8 +90,9 @@ router.post('/', async (req, res) => {
       INSERT INTO devices (
         id, name, host, username, encrypted_password, auth_mode,
         host_key_fingerprint, allow_password_fallback,
-        port, sync_when_connected, last_connected_at, created_at
-      ) VALUES (?, ?, ?, ?, ?, 'password', ?, ?, ?, ?, ?, ?)
+        port, sync_when_connected, backup_enabled, backup_frequency_hours,
+        last_connected_at, created_at
+      ) VALUES (?, ?, ?, ?, ?, 'password', ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id,
       name,
@@ -97,6 +103,8 @@ router.post('/', async (req, res) => {
       allow_password_fallback === false ? 0 : 1,
       port,
       sync_when_connected ? 1 : 0,
+      backup_enabled ? 1 : 0,
+      backup_frequency_hours,
       new Date().toISOString(),
       new Date().toISOString(),
     );
@@ -121,6 +129,8 @@ router.put('/:id', async (req, res) => {
     const username = requireString(req.body.username, 'username');
     const port = optionalInteger(req.body.port, 'port', 1, 65535) || 22;
     const sync_when_connected = optionalBoolean(req.body.sync_when_connected, 'sync_when_connected') || false;
+    const backup_enabled = optionalBoolean(req.body.backup_enabled, 'backup_enabled');
+    const backup_frequency_hours = optionalInteger(req.body.backup_frequency_hours, 'backup_frequency_hours', 1, 24 * 30);
     const password = optionalString(req.body.password, 'password');
     const allow_password_fallback = optionalBoolean(req.body.allow_password_fallback, 'allow_password_fallback');
 
@@ -154,6 +164,7 @@ router.put('/:id', async (req, res) => {
       UPDATE devices
       SET name = ?, host = ?, username = ?, encrypted_password = ?,
           port = ?, sync_when_connected = ?, allow_password_fallback = ?,
+          backup_enabled = ?, backup_frequency_hours = ?,
           host_key_fingerprint = ?, last_connected_at = ?
       WHERE id = ?
     `).run(
@@ -164,6 +175,8 @@ router.put('/:id', async (req, res) => {
       port,
       sync_when_connected ? 1 : 0,
       allow_password_fallback === undefined ? existing.allow_password_fallback : (allow_password_fallback ? 1 : 0),
+      backup_enabled === undefined ? (existing.backup_enabled ? 1 : 0) : (backup_enabled ? 1 : 0),
+      backup_frequency_hours === undefined ? (existing.backup_frequency_hours || 24) : backup_frequency_hours,
       nextFingerprint,
       new Date().toISOString(),
       id,

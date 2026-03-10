@@ -47,7 +47,22 @@ interface Device {
   username: string;
   port: number;
   sync_when_connected: number;
+  backup_enabled: number;
+  backup_frequency_hours: number;
+  last_backup_at?: string | null;
   last_connected_at: string;
+}
+
+interface DeviceBackup {
+  id: string;
+  device_id: string;
+  device_name?: string;
+  status: 'running' | 'success' | 'error' | 'partial';
+  started_at: string;
+  completed_at?: string | null;
+  doc_count?: number;
+  byte_count?: number;
+  error?: string | null;
 }
 
 export default function App() {
@@ -56,6 +71,7 @@ export default function App() {
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [subscriptions, setSubscriptions] = useState<Subscription[]>([]);
   const [devices, setDevices] = useState<Device[]>([]);
+  const [backups, setBackups] = useState<DeviceBackup[]>([]);
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -104,6 +120,7 @@ export default function App() {
   const [accountTestStatus, setAccountTestStatus] = useState<Record<string, { state: 'idle' | 'running' | 'success' | 'error'; message?: string; count?: number; at?: string }>>({});
   const [subscriptionFetchStatus, setSubscriptionFetchStatus] = useState<Record<string, { state: 'idle' | 'running' | 'success' | 'error'; message?: string; count?: number; at?: string }>>({});
   const [manualSyncStatus, setManualSyncStatus] = useState<Record<string, boolean>>({});
+  const [manualBackupStatus, setManualBackupStatus] = useState<Record<string, boolean>>({});
 
   const [showDeviceForm, setShowDeviceForm] = useState(false);
   const [editingDevice, setEditingDevice] = useState<Device | null>(null);
@@ -114,17 +131,20 @@ export default function App() {
     password: '',
     port: 22,
     sync_when_connected: false,
+    backup_enabled: false,
+    backup_frequency_hours: 24,
   });
 
   const fetchData = async () => {
     if (!authenticated) return;
     setLoading(true);
     try {
-      const [docsRes, accountsRes, subsRes, devicesRes] = await Promise.all([
+      const [docsRes, accountsRes, subsRes, devicesRes, backupsRes] = await Promise.all([
         axios.get('/api/library'),
         axios.get('/api/settings'),
         axios.get('/api/settings/subscriptions'),
-        axios.get('/api/devices')
+        axios.get('/api/devices'),
+        axios.get('/api/backups?limit=200'),
       ]);
       
       // Defensive check: ensure data is an array
@@ -132,11 +152,13 @@ export default function App() {
       const accountsData = Array.isArray(accountsRes.data) ? accountsRes.data : [];
       const subscriptionsData = Array.isArray(subsRes.data) ? subsRes.data : [];
       const devicesData = Array.isArray(devicesRes.data) ? devicesRes.data : [];
+      const backupsData = Array.isArray(backupsRes.data) ? backupsRes.data : [];
       
       setDocuments(docsData);
       setAccounts(accountsData);
       setSubscriptions(subscriptionsData);
       setDevices(devicesData);
+      setBackups(backupsData);
       setError(null);
     } catch (err: any) {
       setError(err.response?.data?.error || err.message);
@@ -300,7 +322,16 @@ export default function App() {
       }
       setShowDeviceForm(false);
       setEditingDevice(null);
-      setDeviceForm({ name: '', host: '', username: 'root', password: '', port: 22, sync_when_connected: false });
+      setDeviceForm({
+        name: '',
+        host: '',
+        username: 'root',
+        password: '',
+        port: 22,
+        sync_when_connected: false,
+        backup_enabled: false,
+        backup_frequency_hours: 24,
+      });
       fetchData();
     } catch (err: any) {
       setModalError(err.response?.data?.error || err.message);
@@ -435,6 +466,28 @@ export default function App() {
         return next;
       });
     }
+  };
+
+  const runDeviceBackup = async (deviceId: string) => {
+    setManualBackupStatus(prev => ({ ...prev, [deviceId]: true }));
+    try {
+      await axios.post(`/api/backups/device/${deviceId}`);
+      await fetchData();
+    } catch (err: any) {
+      alert(err.response?.data?.error || err.message || 'Failed to start backup');
+    } finally {
+      setManualBackupStatus(prev => {
+        const next = { ...prev };
+        delete next[deviceId];
+        return next;
+      });
+    }
+  };
+
+  const getLatestBackupForDevice = (deviceId: string) => {
+    return backups
+      .filter((b) => b.device_id === deviceId)
+      .sort((a, b) => new Date(b.started_at).getTime() - new Date(a.started_at).getTime())[0];
   };
 
   const downloadDocPdf = async (doc: Document) => {
@@ -683,7 +736,16 @@ export default function App() {
               <button 
                 onClick={() => {
                     setEditingDevice(null);
-                    setDeviceForm({ name: '', host: '', username: 'root', password: '', port: 22, sync_when_connected: false });
+                    setDeviceForm({
+                      name: '',
+                      host: '',
+                      username: 'root',
+                      password: '',
+                      port: 22,
+                      sync_when_connected: false,
+                      backup_enabled: false,
+                      backup_frequency_hours: 24,
+                    });
                     setShowDeviceForm(true);
                 }}
                 className="rm-button-primary flex items-center px-4 py-2 bg-stone-900 text-white rounded-lg hover:bg-stone-800"
@@ -694,8 +756,11 @@ export default function App() {
             </div>
 
             <div className="grid gap-4">
-                {devices.map(dev => (
-                    <div key={dev.id} className="rm-card bg-white p-6 rounded-2xl border border-stone-200 shadow-sm flex justify-between items-center">
+                {devices.map(dev => {
+                    const latestBackup = getLatestBackupForDevice(dev.id);
+                    const backupRunning = !!manualBackupStatus[dev.id] || latestBackup?.status === 'running';
+                    return (
+                    <div key={dev.id} className="rm-card bg-white p-6 rounded-2xl border border-stone-200 shadow-sm flex justify-between items-start gap-4">
                         <div>
                             <div className="flex items-center gap-2">
                                 <Tablet size={18} />
@@ -705,8 +770,36 @@ export default function App() {
                                 {deviceStatus[dev.id] === 'checking' && <RefreshCw size={14} className="animate-spin text-stone-400" title="Checking..." />}
                             </div>
                             <p className="text-sm text-stone-500 font-mono mt-1">{dev.username}@{dev.host}:{dev.port}</p>
-                            <p className="text-xs text-stone-500 mt-1">{dev.sync_when_connected ? 'Sync when connected: enabled' : 'Sync when connected: disabled'}</p>
-                            <p className="text-xs text-stone-400 mt-1">Last connected: {new Date(dev.last_connected_at).toLocaleString()}</p>
+                            <div className="mt-3 space-y-2 text-xs">
+                              <div className="p-2 rounded border border-stone-200 bg-stone-50">
+                                <p className="font-semibold text-stone-700">Sync</p>
+                                <p className="text-stone-500 mt-1">{dev.sync_when_connected ? 'Sync when connected: enabled' : 'Sync when connected: disabled'}</p>
+                              </div>
+                              <div className="p-2 rounded border border-stone-200 bg-stone-50">
+                                <p className="font-semibold text-stone-700">Backup</p>
+                                <p className="text-stone-500 mt-1">
+                                  {dev.backup_enabled
+                                    ? `Scheduled: every ${dev.backup_frequency_hours}h (when connected)`
+                                    : 'Scheduled backup: disabled'}
+                                </p>
+                                <p className="text-stone-400 mt-1">
+                                  Last backup: {dev.last_backup_at ? new Date(dev.last_backup_at).toLocaleString() : 'Never'}
+                                </p>
+                                {latestBackup && (
+                                  <p className={`mt-1 ${latestBackup.status === 'error' ? 'text-red-600' : latestBackup.status === 'partial' ? 'text-amber-600' : latestBackup.status === 'running' ? 'text-blue-600' : 'text-green-600'}`}>
+                                    Latest: {latestBackup.status}
+                                  </p>
+                                )}
+                                <button
+                                  onClick={() => runDeviceBackup(dev.id)}
+                                  disabled={backupRunning}
+                                  className="mt-2 px-3 py-1.5 text-xs rounded-lg bg-stone-900 text-white hover:bg-stone-800 disabled:opacity-60"
+                                >
+                                  {backupRunning ? 'Backing up…' : 'Run Backup Now'}
+                                </button>
+                              </div>
+                            </div>
+                            <p className="text-xs text-stone-400 mt-2">Last connected: {new Date(dev.last_connected_at).toLocaleString()}</p>
                         </div>
                         <div className="flex gap-2">
                             <button 
@@ -719,6 +812,8 @@ export default function App() {
                                         password: '',
                                         port: dev.port,
                                         sync_when_connected: !!dev.sync_when_connected,
+                                        backup_enabled: !!dev.backup_enabled,
+                                        backup_frequency_hours: dev.backup_frequency_hours || 24,
                                     }); // Don't show password
                                     setShowDeviceForm(true);
                                 }}
@@ -734,7 +829,7 @@ export default function App() {
                             </button>
                         </div>
                     </div>
-                ))}
+                )})}
             </div>
           </div>
         )}
@@ -1039,6 +1134,8 @@ export default function App() {
                     </div>
                 )}
                 <form onSubmit={handleDeviceSubmit} className="space-y-4">
+                    <div className="p-3 rounded-lg border border-stone-200 bg-stone-50">
+                      <p className="text-xs uppercase tracking-wide text-stone-500 font-semibold mb-2">Connection</p>
                     <div>
                         <label className="block text-sm font-medium mb-1">Name</label>
                         <input 
@@ -1093,6 +1190,10 @@ export default function App() {
                             placeholder={editingDevice ? "(Unchanged)" : "Required"}
                         />
                     </div>
+                    </div>
+
+                    <div className="p-3 rounded-lg border border-stone-200 bg-stone-50">
+                      <p className="text-xs uppercase tracking-wide text-stone-500 font-semibold mb-2">Sync</p>
                     <div className="flex items-center gap-2">
                         <input
                             type="checkbox"
@@ -1102,8 +1203,34 @@ export default function App() {
                         />
                         <label htmlFor="sync_when_connected" className="text-sm font-medium">Sync when connected</label>
                     </div>
-
                     <p className="text-xs text-stone-500">Checks every 5 minutes and syncs linked documents when this device is reachable.</p>
+                    </div>
+
+                    <div className="p-3 rounded-lg border border-stone-200 bg-stone-50">
+                      <p className="text-xs uppercase tracking-wide text-stone-500 font-semibold mb-2">Backup</p>
+                      <div className="flex items-center gap-2 mb-2">
+                        <input
+                          type="checkbox"
+                          id="backup_enabled"
+                          checked={deviceForm.backup_enabled}
+                          onChange={e => setDeviceForm({ ...deviceForm, backup_enabled: e.target.checked })}
+                        />
+                        <label htmlFor="backup_enabled" className="text-sm font-medium">Enable scheduled backups</label>
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium mb-1">Backup frequency (hours)</label>
+                        <select
+                          className="w-full px-3 py-2 border rounded-lg"
+                          value={deviceForm.backup_frequency_hours}
+                          onChange={e => setDeviceForm({ ...deviceForm, backup_frequency_hours: parseInt(e.target.value, 10) })}
+                        >
+                          {[6, 12, 24, 48, 72, 168].map((h) => (
+                            <option key={h} value={h}>{h}h</option>
+                          ))}
+                        </select>
+                      </div>
+                      <p className="text-xs text-stone-500 mt-1">Backups run only when the device is reachable, and separately from sync.</p>
+                    </div>
 
                     <div className="flex justify-end gap-2 mt-6">
                         <button 

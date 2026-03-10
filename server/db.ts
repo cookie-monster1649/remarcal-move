@@ -47,11 +47,31 @@ export function initDb() {
       public_key TEXT,
       host_key_fingerprint TEXT,
       allow_password_fallback INTEGER DEFAULT 1,
+      backup_enabled INTEGER DEFAULT 0,
+      backup_frequency_hours INTEGER DEFAULT 24,
+      last_backup_at TEXT,
       port INTEGER DEFAULT 22,
       sync_when_connected INTEGER DEFAULT 0,
       last_connected_at TEXT,
       created_at TEXT DEFAULT CURRENT_TIMESTAMP
     );
+
+    CREATE TABLE IF NOT EXISTS device_backups (
+      id TEXT PRIMARY KEY,
+      device_id TEXT NOT NULL,
+      status TEXT NOT NULL,
+      started_at TEXT NOT NULL,
+      completed_at TEXT,
+      backup_path TEXT,
+      doc_count INTEGER DEFAULT 0,
+      byte_count INTEGER DEFAULT 0,
+      error TEXT,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (device_id) REFERENCES devices(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_device_backups_device_started
+      ON device_backups(device_id, started_at DESC);
 
     CREATE TABLE IF NOT EXISTS documents (
       id TEXT PRIMARY KEY,
@@ -223,6 +243,24 @@ export function initDb() {
   if (!hasAllowPasswordFallback) {
     console.log('Migrating devices: adding allow_password_fallback column');
     db.exec('ALTER TABLE devices ADD COLUMN allow_password_fallback INTEGER DEFAULT 1');
+  }
+
+  const hasBackupEnabled = devicesTableInfo.some(col => col.name === 'backup_enabled');
+  if (!hasBackupEnabled) {
+    console.log('Migrating devices: adding backup_enabled column');
+    db.exec('ALTER TABLE devices ADD COLUMN backup_enabled INTEGER DEFAULT 0');
+  }
+
+  const hasBackupFrequencyHours = devicesTableInfo.some(col => col.name === 'backup_frequency_hours');
+  if (!hasBackupFrequencyHours) {
+    console.log('Migrating devices: adding backup_frequency_hours column');
+    db.exec('ALTER TABLE devices ADD COLUMN backup_frequency_hours INTEGER DEFAULT 24');
+  }
+
+  const hasLastBackupAt = devicesTableInfo.some(col => col.name === 'last_backup_at');
+  if (!hasLastBackupAt) {
+    console.log('Migrating devices: adding last_backup_at column');
+    db.exec('ALTER TABLE devices ADD COLUMN last_backup_at TEXT');
   }
 
   const docsSubTableInfo = db.prepare("PRAGMA table_info(document_subscriptions)").all() as any[];

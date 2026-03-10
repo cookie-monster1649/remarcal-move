@@ -2,6 +2,7 @@ import db from '../db.js';
 import { decrypt } from './encryptionService.js';
 import { SSHService } from './sshService.js';
 import { SyncService } from './syncService.js';
+import { backupService } from './backupService.js';
 
 const POLL_INTERVAL_MS = 5 * 60 * 1000;
 
@@ -56,8 +57,10 @@ export class ConnectionSyncService {
 
     try {
       const devices = db
-        .prepare('SELECT * FROM devices WHERE sync_when_connected = 1')
+        .prepare('SELECT * FROM devices WHERE sync_when_connected = 1 OR backup_enabled = 1')
         .all() as any[];
+
+      const connectedDeviceIds = new Set<string>();
 
       for (const device of devices) {
         const isConnected = await this.isDeviceConnected(device);
@@ -65,23 +68,33 @@ export class ConnectionSyncService {
           continue;
         }
 
+        connectedDeviceIds.add(device.id);
+
         db.prepare('UPDATE devices SET last_connected_at = ? WHERE id = ?').run(new Date().toISOString(), device.id);
 
-        const docs = db
-          .prepare('SELECT id, sync_status FROM documents WHERE device_id = ?')
-          .all(device.id) as any[];
+        if (device.sync_when_connected) {
+          const docs = db
+            .prepare('SELECT id, sync_status FROM documents WHERE device_id = ?')
+            .all(device.id) as any[];
 
-        for (const doc of docs) {
-          if (doc.sync_status === 'syncing') {
-            continue;
-          }
+          for (const doc of docs) {
+            if (doc.sync_status === 'syncing') {
+              continue;
+            }
 
-          try {
-            await this.syncService.syncDocument(doc.id);
-          } catch (err: any) {
-            console.warn(`Sync-on-connect failed for document ${doc.id}: ${err?.message || err}`);
+            try {
+              await this.syncService.syncDocument(doc.id);
+            } catch (err: any) {
+              console.warn(`Sync-on-connect failed for document ${doc.id}: ${err?.message || err}`);
+            }
           }
         }
+      }
+
+      try {
+        await backupService.runDueBackups(connectedDeviceIds);
+      } catch (err: any) {
+        console.warn(`Backup scheduler cycle failed: ${err?.message || err}`);
       }
     } catch (err: any) {
       console.error(`Connection sync cycle failed: ${err?.message || err}`);

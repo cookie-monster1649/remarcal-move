@@ -9,6 +9,7 @@ import { subscriptionPollerService } from './server/services/subscriptionPollerS
 import libraryRoutes from './server/routes/library.js';
 import settingsRoutes from './server/routes/settings.js';
 import devicesRoutes from './server/routes/devices.js';
+import backupsRoutes from './server/routes/backups.js';
 import authRoutes from './server/routes/auth.js';
 import { requireAuth } from './server/services/authService.js';
 import { createRateLimiter, requestTimeout } from './server/middleware/security.js';
@@ -83,6 +84,7 @@ async function startServer() {
   app.use('/api/library', libraryRoutes);
   app.use('/api/settings', settingsRoutes);
   app.use('/api/devices', devicesRoutes);
+  app.use('/api/backups', backupsRoutes);
 
   // Vite middleware
   if (process.env.NODE_ENV !== 'production') {
