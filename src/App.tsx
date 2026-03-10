@@ -183,24 +183,20 @@ export default function App() {
     setAuthenticated(false);
   };
 
+  const checkConnectionForDevice = async (deviceId: string) => {
+    setDeviceStatus((prev) => ({ ...prev, [deviceId]: 'checking' }));
+    try {
+      await axios.post(`/api/devices/${deviceId}/check`);
+      setDeviceStatus((prev) => ({ ...prev, [deviceId]: 'connected' }));
+    } catch {
+      setDeviceStatus((prev) => ({ ...prev, [deviceId]: 'disconnected' }));
+    }
+  };
+
   // Check connection for all devices
   const checkConnections = async () => {
     if (devices.length === 0) return;
-    
-    const newStatus = { ...deviceStatus };
-    
-    await Promise.all(devices.map(async (dev) => {
-        newStatus[dev.id] = 'checking';
-        setDeviceStatus({ ...newStatus });
-        try {
-            await axios.post(`/api/devices/${dev.id}/check`);
-            newStatus[dev.id] = 'connected';
-        } catch (e) {
-            newStatus[dev.id] = 'disconnected';
-        }
-    }));
-    
-    setDeviceStatus(newStatus);
+    await Promise.all(devices.map((dev) => checkConnectionForDevice(dev.id)));
   };
 
   useEffect(() => {
@@ -499,25 +495,37 @@ export default function App() {
             </div>
             <h1 className="rm-brand-title text-xl font-bold tracking-tight">remarcal-move</h1>
             
-            {/* Device Status Indicator (Summary) */}
+            {/* Device Status Indicators (per device) */}
             {devices.length > 0 && (
-                <div className="ml-4 flex items-center gap-2 px-3 py-1 bg-stone-50 rounded-full border border-stone-200 text-xs">
-                    {Object.values(deviceStatus).some(s => s === 'connected') ? (
-                        <>
-                            <Wifi size={14} className="text-green-500" />
-                            <span className="text-stone-600">Connected</span>
-                        </>
-                    ) : Object.values(deviceStatus).some(s => s === 'checking') ? (
-                        <>
+                <div className="ml-4 flex flex-wrap items-center gap-2 text-xs">
+                    {devices.map((dev) => {
+                      const status = deviceStatus[dev.id] || 'disconnected';
+                      const isChecking = status === 'checking';
+                      const isConnected = status === 'connected';
+
+                      return (
+                        <button
+                          key={dev.id}
+                          type="button"
+                          onClick={() => checkConnectionForDevice(dev.id)}
+                          disabled={isChecking}
+                          className="flex items-center gap-2 px-3 py-1 bg-stone-50 rounded-full border border-stone-200 text-xs hover:bg-stone-100 disabled:opacity-70"
+                          title={`Click to test connection: ${dev.name}`}
+                        >
+                          {isChecking ? (
                             <RefreshCw size={14} className="animate-spin text-stone-400" />
-                            <span className="text-stone-500">Checking...</span>
-                        </>
-                    ) : (
-                        <>
+                          ) : isConnected ? (
+                            <Wifi size={14} className="text-green-500" />
+                          ) : (
                             <WifiOff size={14} className="text-red-500" />
-                            <span className="text-stone-600">Disconnected</span>
-                        </>
-                    )}
+                          )}
+                          <span className="font-bold text-stone-800">{dev.name}</span>
+                          <span className="text-stone-600">
+                            {isChecking ? 'Checking...' : isConnected ? 'Connected' : 'Disconnected'}
+                          </span>
+                        </button>
+                      );
+                    })}
                 </div>
             )}
           </div>

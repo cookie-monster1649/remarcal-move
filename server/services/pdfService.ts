@@ -194,10 +194,12 @@ export class PDFService {
       return t.toISOString().slice(0, 10);
     };
 
-    const renderEvents = events.map(e => ({
-      ...e,
-      summary: sanitizeTitle(e.summary),
-    }));
+    const renderEvents = events
+      .filter((e) => (e.participationStatus || '').toLowerCase() !== 'declined')
+      .map(e => ({
+        ...e,
+        summary: sanitizeTitle(e.summary),
+      }));
 
     const isMidnightInTz = (date: Date) => getTzTimeStr(date) === '00:00';
 
