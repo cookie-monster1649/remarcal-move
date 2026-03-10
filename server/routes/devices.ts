@@ -3,6 +3,7 @@ import db from '../db.js';
 import { encrypt, decrypt } from '../services/encryptionService.js';
 import { SSHService } from '../services/sshService.js';
 import { sshKeyManager } from '../services/sshKeyManager.js';
+import { infoLogService } from '../services/infoLogService.js';
 import { v4 as uuidv4 } from 'uuid';
 import {
   getErrorMessage,
@@ -262,6 +263,8 @@ router.post('/:id/enroll-key', async (req, res) => {
     const device = db.prepare('SELECT * FROM devices WHERE id = ?').get(id) as any;
     if (!device) return res.status(404).json({ error: 'Device not found' });
 
+    infoLogService.write('device.key_enroll.started', { deviceId: id, host: device.host });
+
     const fallbackPassword = device.encrypted_password ? decrypt(device.encrypted_password) : undefined;
     if (!fallbackPassword) {
       return res.status(400).json({ error: 'Password is required before key enrollment' });
@@ -307,11 +310,23 @@ router.post('/:id/enroll-key', async (req, res) => {
       id,
     );
 
+    infoLogService.write('device.key_enroll.completed', {
+      deviceId: id,
+      host: device.host,
+      host_key_fingerprint: pinnedFingerprint,
+      allow_password_fallback: 0,
+      cleared_password: true,
+    });
+
     res.json({
       message: 'Key authentication enrolled successfully',
       host_key_fingerprint: pinnedFingerprint,
     });
   } catch (err: any) {
+    infoLogService.write('device.key_enroll.failed', {
+      deviceId: id,
+      error: err?.message || String(err),
+    }, 'error');
     const error = getErrorMessage(err);
     res.status(error.status).json({ error: error.message });
   }

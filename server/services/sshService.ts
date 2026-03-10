@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
 import * as os from 'os';
-import { spawn } from 'child_process';
+import { spawn, spawnSync } from 'child_process';
 
 export interface SSHConfig {
   host: string;
@@ -50,13 +50,46 @@ export class SSHService {
 
   static generateKeyPair(comment = 'remarcal-device-key'): { publicKey: string; privateKey: string } {
     const sshUtils = (ssh2 as any).utils;
-    if (!sshUtils?.generateKeyPairSync) {
-      throw new Error('ssh2 key generation utility unavailable in this runtime');
+    if (sshUtils?.generateKeyPairSync) {
+      const keys = (sshUtils as any).generateKeyPairSync('ed25519', { comment });
+      return {
+        publicKey: keys.public,
+        privateKey: keys.private,
+      };
     }
-    const keys = (sshUtils as any).generateKeyPairSync('ed25519', { comment });
-    return {
-      publicKey: keys.public,
-      privateKey: keys.private,
+
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'remarcal-keygen-'));
+    const keyPath = path.join(tempDir, 'id_ed25519');
+    try {
+      const gen = spawnSync('ssh-keygen', ['-t', 'ed25519', '-N', '', '-C', comment, '-f', keyPath], {
+        encoding: 'utf8',
+      });
+
+      if (gen.error) {
+        throw gen.error;
+      }
+      if (gen.status !== 0) {
+        throw new Error(gen.stderr?.trim() || 'ssh-keygen failed to generate key pair');
+      }
+
+      const privateKey = fs.readFileSync(keyPath, 'utf8');
+      const publicKey = fs.readFileSync(`${keyPath}.pub`, 'utf8').trim();
+      if (!privateKey || !publicKey) {
+        throw new Error('Generated key pair is empty');
+      }
+
+      return {
+        publicKey,
+        privateKey,
+      };
+    } catch (err: any) {
+      throw new Error(`SSH key generation failed: ${err?.message || String(err)}`);
+    } finally {
+      try {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+      } catch {
+        // ignore temp cleanup failures
+      }
     };
   }
 
