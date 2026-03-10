@@ -278,6 +278,18 @@ export class PDFService {
       pageMap.days[getTzDateStr(day)] = currentPage;
     });
 
+    const syncDateStr = getTzDateStr(new Date());
+    const firstDayStr = allDays.length > 0 ? getTzDateStr(allDays[0]) : null;
+    const lastDayStr = allDays.length > 0 ? getTzDateStr(allDays[allDays.length - 1]) : null;
+
+    const getHomeTargetPage = () => {
+      if (pageMap.days[syncDateStr]) return pageMap.days[syncDateStr];
+      if (!firstDayStr || !lastDayStr) return pageMap.year;
+      if (syncDateStr < firstDayStr) return pageMap.days[firstDayStr] || pageMap.year;
+      if (syncDateStr > lastDayStr) return pageMap.days[lastDayStr] || pageMap.year;
+      return pageMap.days[firstDayStr] || pageMap.year;
+    };
+
     // 3. Helper Functions for Rendering
     
     const drawNavBar = (currentDate: Date, showWeek: boolean = true) => {
@@ -367,11 +379,49 @@ export class PDFService {
         }
     };
 
+    const drawHomeButton = () => {
+        const targetPage = getHomeTargetPage();
+        const size = 5.2;
+        const pad = 1.2;
+        const x = pageWidth - size - pad;
+        const y = 1.2;
+
+        doc.setDrawColor(0);
+        doc.setLineWidth(0.45);
+
+        const left = x + 0.6;
+        const right = x + size - 0.6;
+        const top = y + 0.6;
+        const base = y + size - 0.6;
+        const mid = x + size / 2;
+        const wallTop = y + size * 0.52;
+        const doorW = size * 0.26;
+        const doorL = mid - doorW / 2;
+        const doorR = mid + doorW / 2;
+
+        // Roof
+        doc.line(left, wallTop, mid, top);
+        doc.line(mid, top, right, wallTop);
+        // Left wall + floor to door
+        doc.line(left, wallTop, left, base);
+        doc.line(left, base, doorL, base);
+        // Right wall + floor from door
+        doc.line(right, wallTop, right, base);
+        doc.line(doorR, base, right, base);
+        // Door cutout
+        doc.line(doorL, base, doorL, wallTop + 1.2);
+        doc.line(doorR, base, doorR, wallTop + 1.2);
+        doc.line(doorL, wallTop + 1.2, doorR, wallTop + 1.2);
+
+        doc.link(x - 0.2, y - 0.2, size + 0.4, size + 0.4, { pageNumber: targetPage });
+    };
+
     // 4. Render Pages
     // Page 1 is intentionally left blank for cover/writing.
 
     // --- Page 2: Year View ---
     doc.addPage();
+    drawHomeButton();
     doc.setFontSize(14);
     doc.setFont("helvetica", "normal");
     doc.text(`${config.year} Calendar`, pageWidth / 2, 10, { align: 'center' });
@@ -441,6 +491,7 @@ export class PDFService {
     // --- Section A: Month Views (all months) ---
     monthsInYear.forEach((monthDate) => {
             doc.addPage();
+            drawHomeButton();
             
             doc.setFontSize(14);
             doc.setFont("helvetica", "normal");
@@ -608,6 +659,7 @@ export class PDFService {
     // --- Section B: Week Views (all weeks) ---
     uniqueWeekStarts.forEach((weekStartDate) => {
              doc.addPage();
+             drawHomeButton();
              
              const wStart = startOfWeek(weekStartDate, { weekStartsOn: 1 });
              const wEnd = endOfWeek(weekStartDate, { weekStartsOn: 1 });
@@ -790,6 +842,7 @@ export class PDFService {
     // --- Section C: Daily Views (all days) ---
     allDays.forEach((day) => {
         doc.addPage();
+        drawHomeButton();
         
         doc.setFontSize(14);
         doc.setFont("helvetica", "normal");
