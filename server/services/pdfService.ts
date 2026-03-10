@@ -833,6 +833,7 @@ export class PDFService {
         const hourH = mainContentH / totalHours;
         const isoWeekday = parseInt(getTzFormat(day, 'i')); // 1=Mon ... 7=Sun
         const isWeekday = isoWeekday >= 1 && isoWeekday <= 5;
+        const dayFiveAmUtc = fromZonedTime(`${currentDayStr}T05:00:00`, tz);
         
         for (let h = startHour; h <= endHour; h++) {
             const y = mainContentY + (h - startHour) * hourH;
@@ -874,7 +875,7 @@ export class PDFService {
           });
         }
         
-        const items = dayEvents.map(e => {
+        const timedItems = dayEvents.map(e => {
             const clippedStartDate = e.start.getTime() < dayStartUtc.getTime() ? dayStartUtc : e.start;
             const clippedEndDate = e.end.getTime() > dayEndUtc.getTime() ? dayEndUtc : e.end;
             const rawStartH = getTzHour(clippedStartDate);
@@ -898,10 +899,40 @@ export class PDFService {
                 rawEndH,
                 unclippedStart,
                 unclippedEnd,
+                marker: false,
                 colIndex: 0,
                 totalCols: 1
             };
-        }).filter(i => i.end > i.start)
+        }).filter(i => i.end > i.start);
+
+        // For events that touch midnight->5am, add a small marker at 5am carrying
+        // the true event start time + title so early activity is visible even when
+        // the displayed schedule window starts at 5am.
+        const earlyMorningMarkers = dayEvents
+          .filter((e) => e.end.getTime() > dayStartUtc.getTime() && e.start.getTime() < dayFiveAmUtc.getTime())
+          .map((e) => {
+            const markerStart = startHour;
+            const markerEnd = Math.min(endHour, markerStart + 0.35);
+            const eventStartTime = getTzTimeStr(e.start);
+            return {
+              event: {
+                ...e,
+                summary: `${eventStartTime} ${e.summary}`,
+              },
+              start: markerStart,
+              end: markerEnd,
+              duration: markerEnd - markerStart,
+              rawStartH: markerStart,
+              rawEndH: markerEnd,
+              unclippedStart: markerStart,
+              unclippedEnd: markerEnd,
+              marker: true,
+              colIndex: 0,
+              totalCols: 1,
+            };
+          });
+
+        const items = [...timedItems, ...earlyMorningMarkers]
           .sort((a, b) => a.start - b.start || b.duration - a.duration);
 
         if (shouldTraceDay) {

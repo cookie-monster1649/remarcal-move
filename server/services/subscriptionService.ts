@@ -514,16 +514,64 @@ export class SubscriptionService {
         return;
       }
 
-// expand everything in the calendar view; helper handles tz/recurrence.
-      const occurrences = this.parseICSEvents(body, rangeStart, rangeEnd);
-      const seenAt = new Date().toISOString();
-      const traceMaxRows = traceConfig.limit;
-      let traceRows = 0;
+      const parsed = ICAL.parse(body);
+      const vcal = new ICAL.Component(parsed);
+      const vevents = vcal.getAllSubcomponents('vevent');
+      const vfreebusy = vcal.getAllSubcomponents('vfreebusy');
+      const firstVtimezone = vcal.getFirstSubcomponent('vtimezone');
+      const calendarTimezone = this.normalizeTimezoneId(
+        this.getFirstPropertyValue(vcal, 'x-wr-timezone')
+        || this.getFirstPropertyValue(vcal, 'timezone-id')
+        || this.getFirstPropertyValue(firstVtimezone, 'tzid')
+        || null,
+      );
 
       this.traceLog('fetchSubscription:parsed', {
         subscriptionId,
-        occurrenceCount: occurrences.length,
+        veventCount: vevents.length,
+        vfreebusyCount: vfreebusy.length,
+        calendarTimezone,
       });
+
+      // Build complete event sets by UID and deterministically link exceptions.
+      const eventsByUid = new Map<string, ICAL.Event>();
+      const pendingExceptionsByUid = new Map<string, ICAL.Component[]>();
+
+      for (const vevent of vevents) {
+        const uid = vevent.getFirstPropertyValue('uid') as string | null;
+        if (!uid) continue;
+
+        let event: ICAL.Event;
+        try {
+          event = new ICAL.Event(vevent);
+        } catch {
+          continue;
+        }
+
+        const recurrenceId = vevent.getFirstPropertyValue('recurrence-id');
+        if (recurrenceId) {
+          const base = eventsByUid.get(uid);
+          if (base) {
+            base.relateException(vevent);
+          } else {
+            const list = pendingExceptionsByUid.get(uid) || [];
+            list.push(vevent);
+            pendingExceptionsByUid.set(uid, list);
+          }
+          continue;
+        }
+
+        eventsByUid.set(uid, event);
+        const queued = pendingExceptionsByUid.get(uid);
+        if (queued && queued.length) {
+          queued.forEach((ex) => event.relateException(ex));
+          pendingExceptionsByUid.delete(uid);
+        }
+      }
+
+      const seenAt = new Date().toISOString();
+      const traceMaxRows = traceConfig.limit;
+      let traceRows = 0;
 
       const upsert = db.prepare(`
         INSERT INTO subscription_events (
@@ -542,33 +590,179 @@ export class SubscriptionService {
       `);
 
       const applySnapshot = db.transaction(() => {
-        for (const ev of occurrences) {
+        for (const event of eventsByUid.values()) {
+          const vevent = event.component;
+          if (this.isCancelled(vevent)) continue;
+
+          const uid = vevent.getFirstPropertyValue('uid') as string | null;
+          if (!uid) continue;
+
+          const summaryFallback = (vevent.getFirstPropertyValue('summary') as string | null) || '';
+          const locationFallback = (vevent.getFirstPropertyValue('location') as string | null) || null;
+          const descriptionFallback = (vevent.getFirstPropertyValue('description') as string | null) || null;
+
+          if (event.isRecurring()) {
+            // When iterating recurring events we must not pass the sync window as the
+            // iterator start time. ical.js treats the provided "start" as the
+            // DTSTART for the whole series, which has the side‑effect of shifting the
+            // wall‑clock time of every occurrence to match that value.  this was the
+            // root cause of the previous bug where every recurring instance began at
+            // the same time (the first moment of the range).
+            //
+            // Instead, begin from the event's actual DTSTART and simply skip any
+            // occurrences that fall entirely before the requested window.  The guard
+            // variable keeps us from iterating forever on wildly long series.
+            const iterator = event.iterator(event.startDate);
+            let guard = 0;
+
+            while (true) {
+              guard++;
+              if (guard > this.maxOccurrenceIterations) break;
+
+              const next = iterator.next();
+              if (!next) break;
+
+              const details = event.getOccurrenceDetails(next);
+              const item = details.item;
+              const sourceTzid = this.resolveTimezoneId(
+                this.normalizeTimezoneId(
+                this.getPropertyTimezoneId(item, 'dtstart')
+                || this.getPropertyTimezoneId(event.component, 'dtstart')
+                || details.startDate.zone?.tzid
+                || event.startDate.zone?.tzid
+                || null,
+                ),
+                calendarTimezone,
+              );
+              const endTzid = this.resolveTimezoneId(
+                this.normalizeTimezoneId(
+                this.getPropertyTimezoneId(item, 'dtend')
+                || this.getPropertyTimezoneId(event.component, 'dtend')
+                || sourceTzid,
+                ),
+                calendarTimezone,
+              );
+
+              const startDate = this.toEventDate(details.startDate, sourceTzid);
+              const endDate = this.toEventDate(details.endDate, endTzid);
+              if (!startDate || !endDate) continue;
+              if (!this.validDateRange(startDate, endDate)) continue;
+              if (startDate.getTime() > rangeEnd.getTime()) break;
+
+              // drop occurrences that only exist completely before the window
+              if (!this.overlaps(startDate, endDate, rangeStart, rangeEnd)) continue;
+
+              if (this.isCancelled(item)) continue;
+
+              const summary = this.getFirstPropertyValue(item, 'summary') || summaryFallback;
+              const location = this.getFirstPropertyValue(item, 'location') || locationFallback;
+              const description = this.getFirstPropertyValue(item, 'description') || descriptionFallback;
+              const timezone = sourceTzid;
+              const recurrenceId = this.recurrenceKey(details, sourceTzid);
+
+              upsert.run(
+                subscriptionId,
+                uid,
+                recurrenceId,
+                summary,
+                startDate.toISOString(),
+                endDate.toISOString(),
+                location,
+                description,
+                details.startDate.isDate ? 1 : 0,
+                timezone,
+                seenAt,
+              );
+
+              if (traceConfig.ingest && traceRows < traceMaxRows) {
+                traceRows++;
+                this.traceLog('occurrence:upsert', {
+                  subscriptionId,
+                  uid,
+                  recurrenceId,
+                  startAt: startDate.toISOString(),
+                  endAt: endDate.toISOString(),
+                  timezone,
+                  allDay: details.startDate.isDate,
+                });
+              }
+            }
+            continue;
+          }
+
+          const sourceTzid = this.resolveTimezoneId(
+            this.normalizeTimezoneId(
+            this.getPropertyTimezoneId(vevent, 'dtstart')
+            || event.startDate.zone?.tzid
+            || null,
+            ),
+            calendarTimezone,
+          );
+          const endTzid = this.resolveTimezoneId(
+            this.normalizeTimezoneId(
+            this.getPropertyTimezoneId(vevent, 'dtend')
+            || sourceTzid,
+            ),
+            calendarTimezone,
+          );
+
+          const startDate = this.toEventDate(event.startDate, sourceTzid);
+          const endDate = this.toEventDate(event.endDate, endTzid);
+          if (!startDate || !endDate) continue;
+          if (!this.validDateRange(startDate, endDate)) continue;
+          if (!this.overlaps(startDate, endDate, rangeStart, rangeEnd)) continue;
+
           upsert.run(
             subscriptionId,
-            ev.uid,
-            ev.recurrenceId,
-            ev.summary,
-            ev.start.toISOString(),
-            ev.end.toISOString(),
-            ev.location,
-            ev.description,
-            ev.allDay ? 1 : 0,
-            ev.timezone,
+            uid,
+            '',
+            summaryFallback,
+            startDate.toISOString(),
+            endDate.toISOString(),
+            locationFallback,
+            descriptionFallback,
+            event.startDate.isDate ? 1 : 0,
+            sourceTzid,
             seenAt,
           );
 
           if (traceConfig.ingest && traceRows < traceMaxRows) {
             traceRows++;
-            this.traceLog('occurrence:upsert', {
+            this.traceLog('single-event:upsert', {
               subscriptionId,
-              uid: ev.uid,
-              recurrenceId: ev.recurrenceId,
-              startAt: ev.start.toISOString(),
-              endAt: ev.end.toISOString(),
-              timezone: ev.timezone,
-              allDay: ev.allDay,
+              uid,
+              recurrenceId: '',
+              startAt: startDate.toISOString(),
+              endAt: endDate.toISOString(),
+              timezone: sourceTzid,
+              allDay: event.startDate.isDate,
             });
           }
+        }
+
+        // Include VFREEBUSY periods as synthetic events when present in feed.
+        for (const busyComponent of vfreebusy) {
+          const uidBase = (busyComponent.getFirstPropertyValue('uid') as string | null) || `vfreebusy-${subscriptionId}`;
+          const organizer = (busyComponent.getFirstPropertyValue('organizer') as string | null) || null;
+          const periods = this.freeBusyPeriods(busyComponent);
+
+          periods.forEach((period, idx) => {
+            if (!this.overlaps(period.start, period.end, rangeStart, rangeEnd)) return;
+
+            upsert.run(
+              subscriptionId,
+              uidBase,
+              `vfreebusy-${idx}-${period.start.toISOString()}`,
+              organizer ? `Busy (${organizer})` : 'Busy',
+              period.start.toISOString(),
+              period.end.toISOString(),
+              null,
+              null,
+              0,
+              null,
+              seenAt,
+            );
+          });
         }
 
         // Authoritative snapshot: delete rows not seen in this fetch.
