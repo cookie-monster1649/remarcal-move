@@ -382,12 +382,12 @@ export class PDFService {
     const drawHomeButton = () => {
         const targetPage = getHomeTargetPage();
         const size = 5.2;
-        const pad = 1.2;
+        const pad = 1.5;
         const x = pageWidth - size - pad;
-        const y = 1.2;
+        const y = 1.5;
 
         doc.setDrawColor(0);
-        doc.setLineWidth(0.45);
+        doc.setLineWidth(0.38);
 
         const left = x + 0.6;
         const right = x + size - 0.6;
