@@ -17,6 +17,7 @@ export interface CalendarEvent {
 export interface PDFConfig {
   year: number;
   timezone: string;
+  pageOffset?: number;
 }
 
 export class PDFService {
@@ -233,14 +234,16 @@ export class PDFService {
     
     const allDays = eachDayOfInterval({ start: effectiveStart, end: effectiveEnd });
     
+    const pageOffset = Math.max(0, Math.floor(config.pageOffset || 0));
+
     const pageMap = {
-      year: 1,
+      year: 1 + pageOffset,
       months: {} as Record<string, number>,
       weeks: {} as Record<string, number>,
       days: {} as Record<string, number>,
     };
 
-    let currentPage = 1; // Year view is page 1
+    let currentPage = 1 + pageOffset; // Year view is shifted when cover pages are prepended
     
     let currentMonthKey = '';
     let currentWeekKey = '';
