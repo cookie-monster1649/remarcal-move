@@ -751,6 +751,14 @@ export class PDFService {
                  const x = gridX + pos.c*cellW;
                  const y = gridY + pos.r*cellH;
                  dayMeta.push({ index: i, x, y, w: cellW, h: cellH, date: d });
+
+                 // Weekly cell event geometry (single source of truth)
+                 const eventBoxInsetX = 1.2;
+                 const eventTextInsetX = 0.6;
+                 const eventBoxX = x + eventBoxInsetX;
+                 const eventBoxW = cellW - eventBoxInsetX * 2;
+                 const eventTextX = eventBoxX + eventTextInsetX;
+                 const eventLabelMaxW = Math.max(0, eventBoxW - eventTextInsetX * 2);
                  
                  doc.setDrawColor(0);
                  doc.setLineWidth(0.1);
@@ -796,10 +804,10 @@ export class PDFService {
                 const eventBottomLimit = y + cellH - 1;
                 const maxRows = Math.max(0, Math.floor((eventBottomLimit - eventStartY - eventBoxH) / eventStep) + 1);
                 const eventRows = [
-                  ...allDayEvents.map((e) => ({ event: e, label: cutToFit(e.summary, cellW - 5) })),
+                  ...allDayEvents.map((e) => ({ event: e, label: cutToFit(e.summary, eventLabelMaxW) })),
                   ...timedEvents.map((e) => {
                     const time = getTzTimeStr(e.start);
-                    return { event: e, label: cutToFit(`${time} ${e.summary}`, cellW - 5) };
+                    return { event: e, label: cutToFit(`${time} ${e.summary}`, eventLabelMaxW) };
                   }),
                 ];
                 const hasOverflow = eventRows.length > maxRows;
@@ -810,21 +818,21 @@ export class PDFService {
                  doc.setTextColor(0);
                 eventRows.slice(0, normalRows).forEach((row) => {
                     if (isDeclinedEvent(row.event)) setDotted();
-                    doc.roundedRect(x + 2, eventY, cellW - 4, 5, 1, 1, 'S');
+                    doc.roundedRect(eventBoxX, eventY, eventBoxW, 5, 1, 1, 'S');
                     if (isDeclinedEvent(row.event)) resetDotted();
-                    doc.text(row.label, x + 3, eventY + 3.5);
+                    doc.text(row.label, eventTextX, eventY + 3.5);
                     if (isDeclinedEvent(row.event)) {
                       doc.setLineWidth(0.1);
-                      doc.line(x + 2.5, eventY + 2.5, x + cellW - 2.5, eventY + 2.5);
+                      doc.line(eventBoxX + 0.5, eventY + 2.5, eventBoxX + eventBoxW - 0.5, eventY + 2.5);
                     }
                     eventY += 6;
                 });
 
                 if (hasOverflow && maxRows > 0) {
-                    doc.roundedRect(x + 2, eventY, cellW - 4, 5, 1, 1, 'S');
-                    doc.text('See all +', x + 3, eventY + 3.5);
+                    doc.roundedRect(eventBoxX, eventY, eventBoxW, 5, 1, 1, 'S');
+                    doc.text('See all +', eventTextX, eventY + 3.5);
                     if (pageMap.days[dKey]) {
-                      doc.link(x + 2, eventY, cellW - 4, 5, { pageNumber: pageMap.days[dKey] });
+                      doc.link(eventBoxX, eventY, eventBoxW, 5, { pageNumber: pageMap.days[dKey] });
                     }
                 }
              });
@@ -833,18 +841,21 @@ export class PDFService {
                  const startCell = dayMeta[seg.startIdx];
                  const endCell = dayMeta[seg.endIdx];
                  if (!startCell || !endCell) return;
-                 const sx = startCell.x + 2;
-                 const ex = endCell.x + endCell.w - 2;
+                 const spanInsetX = 1;
+                 const spanTextInsetX = 0.6;
+                 const sx = startCell.x + spanInsetX;
+                 const ex = endCell.x + endCell.w - spanInsetX;
+                 const sw = ex - sx;
                  const sy = startCell.y + 10 + seg.lane * 4;
                  const sh = 3.2;
                  doc.setFillColor(245, 245, 245);
                  doc.setDrawColor(100);
                  doc.setLineWidth(0.1);
-                 doc.roundedRect(sx, sy, ex - sx, sh, 0.8, 0.8, 'FD');
+                 doc.roundedRect(sx, sy, sw, sh, 0.8, 0.8, 'FD');
                  if (seg.titleOnStart) {
                    doc.setFontSize(6);
                    doc.setTextColor(0);
-                   doc.text(cutToFit(seg.title, ex - sx - 2), sx + 1, sy + 2.3);
+                   doc.text(cutToFit(seg.title, Math.max(0, sw - spanTextInsetX * 2)), sx + spanTextInsetX, sy + 2.3);
                  }
                });
              });

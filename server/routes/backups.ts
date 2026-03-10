@@ -1,6 +1,7 @@
 import express from 'express';
 import db from '../db.js';
 import { backupService } from '../services/backupService.js';
+import { infoLogService } from '../services/infoLogService.js';
 import { getErrorMessage, optionalString } from '../utils/validation.js';
 
 const router = express.Router();
@@ -48,6 +49,17 @@ router.get('/', (req, res) => {
   }
 });
 
+router.get('/logs/recent', (req, res) => {
+  try {
+    const limit = Number(req.query.limit || 200);
+    const rows = infoLogService.tail(Math.max(1, Math.min(limit, 1000)));
+    return res.json(rows);
+  } catch (err: any) {
+    const error = getErrorMessage(err);
+    return res.status(error.status).json({ error: error.message });
+  }
+});
+
 router.get('/:id', (req, res) => {
   try {
     const { id } = req.params;
@@ -63,6 +75,31 @@ router.get('/:id', (req, res) => {
     }
 
     return res.json(row);
+  } catch (err: any) {
+    const error = getErrorMessage(err);
+    return res.status(error.status).json({ error: error.message });
+  }
+});
+
+router.get('/:id/progress', (req, res) => {
+  try {
+    const { id } = req.params;
+    const progress = backupService.getBackupProgress(id);
+    if (!progress) {
+      return res.status(404).json({ error: 'No live progress for this backup' });
+    }
+    return res.json(progress);
+  } catch (err: any) {
+    const error = getErrorMessage(err);
+    return res.status(error.status).json({ error: error.message });
+  }
+});
+
+router.post('/:id/cancel', (req, res) => {
+  try {
+    const { id } = req.params;
+    backupService.cancelBackup(id);
+    return res.json({ message: 'Cancel requested' });
   } catch (err: any) {
     const error = getErrorMessage(err);
     return res.status(error.status).json({ error: error.message });

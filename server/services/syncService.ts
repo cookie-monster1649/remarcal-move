@@ -4,6 +4,8 @@ import { PDFService } from './pdfService.js';
 import { SSHService } from './sshService.js';
 import { decrypt } from './encryptionService.js';
 import { subscriptionService } from './subscriptionService.js';
+import { deviceOperationService } from './deviceOperationService.js';
+import { infoLogService } from './infoLogService.js';
 import * as fs from 'fs';
 import * as path from 'path';
 import { traceConfig } from '../utils/traceConfig.js';
@@ -186,12 +188,7 @@ export class SyncService {
     const doc = db.prepare('SELECT * FROM documents WHERE id = ?').get(docId) as any;
     if (!doc) throw new Error(`Document ${docId} not found`);
 
-    // Update status to syncing
-    db.prepare('UPDATE documents SET sync_status = ?, last_error = NULL WHERE id = ?').run('syncing', docId);
-
     try {
-      const { localPath } = await this.generateDocumentPDF(docId);
-
       if (!doc.device_id) {
         throw new Error('Device must be configured for sync');
       }
@@ -199,16 +196,34 @@ export class SyncService {
       const device = db.prepare('SELECT * FROM devices WHERE id = ?').get(doc.device_id) as any;
       if (!device) throw new Error('Device not found');
 
-      const sshConfig = buildDeviceSshConfig(device);
-      const deviceSshService = new SSHService(sshConfig);
-      await deviceSshService.uploadPDF(doc.remote_path, localPath, doc.title);
+      const lock = deviceOperationService.tryAcquire(device.id, 'sync');
+      if (lock.ok === false) {
+        throw new Error(lock.reason);
+      }
 
-      // 5. Update Status
-      db.prepare('UPDATE documents SET sync_status = ?, last_synced_at = ? WHERE id = ?').run('idle', new Date().toISOString(), docId);
+      // Update status to syncing
+      db.prepare('UPDATE documents SET sync_status = ?, last_error = NULL WHERE id = ?').run('syncing', docId);
+      infoLogService.write('sync.started', { docId, deviceId: device.id, remotePath: doc.remote_path });
+
+      try {
+        const { localPath } = await this.generateDocumentPDF(docId);
+
+        const sshConfig = buildDeviceSshConfig(device);
+        const deviceSshService = new SSHService(sshConfig);
+        await deviceSshService.uploadPDF(doc.remote_path, localPath, doc.title);
+
+        // 5. Update Status
+        const completedAt = new Date().toISOString();
+        db.prepare('UPDATE documents SET sync_status = ?, last_synced_at = ? WHERE id = ?').run('idle', completedAt, docId);
+        infoLogService.write('sync.completed', { docId, deviceId: device.id, at: completedAt });
+      } finally {
+        deviceOperationService.release(device.id, 'sync');
+      }
 
     } catch (error: any) {
       console.error(`Sync failed for doc ${docId}:`, error);
       db.prepare('UPDATE documents SET sync_status = ?, last_error = ? WHERE id = ?').run('error', error.message, docId);
+      infoLogService.write('sync.failed', { docId, error: error.message }, 'error');
       throw error;
     }
   }

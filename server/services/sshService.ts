@@ -22,6 +22,24 @@ export interface DeviceFile {
   lastModified: Date;
 }
 
+export interface SnapshotPreflight {
+  totalFiles: number;
+  totalBytes: number;
+}
+
+export interface SnapshotProgress {
+  transferredBytes: number;
+  totalBytes?: number;
+  currentFile?: string;
+  phase?: 'preflight' | 'transfer' | 'manifest' | 'finalize';
+}
+
+export interface SnapshotOptions {
+  expectedTotalBytes?: number;
+  onProgress?: (progress: SnapshotProgress) => void;
+  isCancelled?: () => boolean;
+}
+
 export class SSHService {
   private config: SSHConfig;
   private observedHostKeyFingerprint: string | null = null;
@@ -176,7 +194,55 @@ export class SSHService {
     });
   }
 
-  private async downloadDirectoryRecursiveSftp(sftp: ssh2.SFTPWrapper, remoteDir: string, localDir: string): Promise<void> {
+  private async runCommandWithProgress(command: string, args: string[], onStdout: (line: string) => void, isCancelled?: () => boolean): Promise<void> {
+    await new Promise<void>((resolve, reject) => {
+      const child = spawn(command, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+      let stderr = '';
+      let stdoutBuf = '';
+      const timer = setInterval(() => {
+        if (isCancelled?.()) {
+          child.kill('SIGTERM');
+        }
+      }, 300);
+
+      child.stdout.on('data', (chunk) => {
+        stdoutBuf += chunk.toString();
+        const parts = stdoutBuf.split(/\r?\n/);
+        stdoutBuf = parts.pop() || '';
+        for (const line of parts) onStdout(line);
+      });
+
+      child.stderr.on('data', (chunk) => {
+        stderr += chunk.toString();
+      });
+
+      child.on('error', (err) => {
+        clearInterval(timer);
+        reject(err);
+      });
+
+      child.on('close', (code) => {
+        clearInterval(timer);
+        if (isCancelled?.()) {
+          reject(new Error('Backup cancelled'));
+          return;
+        }
+        if (code === 0) {
+          resolve();
+          return;
+        }
+        reject(new Error(stderr.trim() || `${command} exited with code ${code}`));
+      });
+    });
+  }
+
+  private async downloadDirectoryRecursiveSftp(
+    sftp: ssh2.SFTPWrapper,
+    remoteDir: string,
+    localDir: string,
+    options?: SnapshotOptions,
+    state?: { transferred: number },
+  ): Promise<void> {
     fs.mkdirSync(localDir, { recursive: true });
 
     const entries = await new Promise<ssh2.FileEntry[]>((resolve, reject) => {
@@ -198,12 +264,38 @@ export class SSHService {
       const isDir = (mode & 0o170000) === 0o040000;
       const isFile = (mode & 0o170000) === 0o100000;
 
+      if (options?.isCancelled?.()) {
+        throw new Error('Backup cancelled');
+      }
+
       if (isDir) {
-        await this.downloadDirectoryRecursiveSftp(sftp, remotePath, localPath);
+        await this.downloadDirectoryRecursiveSftp(sftp, remotePath, localPath, options, state);
         continue;
       }
 
       if (isFile) {
+        const remoteSize = entry.attrs?.size || 0;
+        let skipExisting = false;
+        try {
+          const localStat = fs.statSync(localPath);
+          if (localStat.isFile() && localStat.size === remoteSize) {
+            skipExisting = true;
+          }
+        } catch {
+          // no local file
+        }
+
+        if (skipExisting) {
+          state && (state.transferred += remoteSize);
+          options?.onProgress?.({
+            transferredBytes: state?.transferred || 0,
+            totalBytes: options.expectedTotalBytes,
+            currentFile: remotePath,
+            phase: 'transfer',
+          });
+          continue;
+        }
+
         await new Promise<void>((resolve, reject) => {
           sftp.fastGet(remotePath, localPath, (err) => {
             if (err) {
@@ -213,11 +305,53 @@ export class SSHService {
             resolve();
           });
         });
+
+        state && (state.transferred += remoteSize);
+        options?.onProgress?.({
+          transferredBytes: state?.transferred || 0,
+          totalBytes: options.expectedTotalBytes,
+          currentFile: remotePath,
+          phase: 'transfer',
+        });
       }
     }
   }
 
-  async snapshotXochitlDirectory(remoteDir: string, localDir: string): Promise<{ method: 'rsync' | 'sftp' }> {
+  async preflightXochitlDirectory(remoteDir: string): Promise<SnapshotPreflight> {
+    return this.withSftp(async (_conn, sftp) => {
+      let totalFiles = 0;
+      let totalBytes = 0;
+
+      const walk = async (dir: string): Promise<void> => {
+        const entries = await new Promise<ssh2.FileEntry[]>((resolve, reject) => {
+          sftp.readdir(dir, (err, list) => {
+            if (err) return reject(err);
+            resolve(list || []);
+          });
+        });
+
+        for (const entry of entries) {
+          if (!entry?.filename || entry.filename === '.' || entry.filename === '..') continue;
+          const remotePath = path.posix.join(dir, entry.filename);
+          const mode = entry.attrs?.mode || 0;
+          const isDir = (mode & 0o170000) === 0o040000;
+          const isFile = (mode & 0o170000) === 0o100000;
+
+          if (isDir) {
+            await walk(remotePath);
+          } else if (isFile) {
+            totalFiles += 1;
+            totalBytes += entry.attrs?.size || 0;
+          }
+        }
+      };
+
+      await walk(remoteDir);
+      return { totalFiles, totalBytes };
+    });
+  }
+
+  async snapshotXochitlDirectory(remoteDir: string, localDir: string, options?: SnapshotOptions): Promise<{ method: 'rsync' | 'sftp' }> {
     fs.mkdirSync(localDir, { recursive: true });
 
     const cfg = this.getConfig();
@@ -239,13 +373,27 @@ export class SSHService {
         const normalizedRemote = remoteDir.endsWith('/') ? remoteDir : `${remoteDir}/`;
         const normalizedLocal = localDir.endsWith(path.sep) ? localDir : `${localDir}${path.sep}`;
 
-        await this.runCommand('rsync', [
+        let transferredBytes = 0;
+        await this.runCommandWithProgress('rsync', [
           '-az',
+          '--partial',
+          '--append-verify',
           '--delete',
+          '--info=progress2,stats2',
           '-e', sshCmd,
           `${cfg.username}@${cfg.host}:${normalizedRemote}`,
           normalizedLocal,
-        ]);
+        ], (line) => {
+          const m = line.match(/\s([0-9,]+)\s+\d+%/);
+          if (m) {
+            transferredBytes = Number(m[1].replace(/,/g, '')) || transferredBytes;
+            options?.onProgress?.({
+              transferredBytes,
+              totalBytes: options.expectedTotalBytes,
+              phase: 'transfer',
+            });
+          }
+        }, options?.isCancelled);
 
         return { method: 'rsync' };
       } catch (err) {
@@ -260,7 +408,8 @@ export class SSHService {
     }
 
     await this.withSftp(async (_conn, sftp) => {
-      await this.downloadDirectoryRecursiveSftp(sftp, remoteDir, localDir);
+      const state = { transferred: 0 };
+      await this.downloadDirectoryRecursiveSftp(sftp, remoteDir, localDir, options, state);
     });
 
     return { method: 'sftp' };

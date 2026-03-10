@@ -57,12 +57,32 @@ interface DeviceBackup {
   id: string;
   device_id: string;
   device_name?: string;
-  status: 'running' | 'success' | 'error' | 'partial';
+  status: 'running' | 'success' | 'error' | 'partial' | 'cancelled';
   started_at: string;
   completed_at?: string | null;
   doc_count?: number;
   byte_count?: number;
   error?: string | null;
+}
+
+interface BackupProgress {
+  backupId: string;
+  deviceId: string;
+  phase: 'preflight' | 'transfer' | 'manifest' | 'finalize' | 'done' | 'cancelled' | 'error';
+  transferredBytes: number;
+  totalBytes: number;
+  totalFiles: number;
+  speedBytesPerSec?: number;
+  percent?: number;
+  updatedAt: string;
+  message?: string;
+}
+
+interface InfoLogEvent {
+  ts: string;
+  level: 'info' | 'warn' | 'error';
+  event: string;
+  [key: string]: any;
 }
 
 export default function App() {
@@ -72,6 +92,8 @@ export default function App() {
   const [subscriptions, setSubscriptions] = useState<Subscription[]>([]);
   const [devices, setDevices] = useState<Device[]>([]);
   const [backups, setBackups] = useState<DeviceBackup[]>([]);
+  const [backupProgress, setBackupProgress] = useState<Record<string, BackupProgress>>({});
+  const [infoLogs, setInfoLogs] = useState<InfoLogEvent[]>([]);
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -484,11 +506,58 @@ export default function App() {
     }
   };
 
+  const cancelDeviceBackup = async (backupId: string) => {
+    try {
+      await axios.post(`/api/backups/${backupId}/cancel`);
+      await fetchData();
+    } catch (err: any) {
+      alert(err.response?.data?.error || err.message || 'Failed to cancel backup');
+    }
+  };
+
   const getLatestBackupForDevice = (deviceId: string) => {
     return backups
       .filter((b) => b.device_id === deviceId)
       .sort((a, b) => new Date(b.started_at).getTime() - new Date(a.started_at).getTime())[0];
   };
+
+  useEffect(() => {
+    if (!authenticated) return;
+    if (activeTab !== 'devices') return;
+
+    const poll = async () => {
+      try {
+        const running = backups.filter((b) => b.status === 'running');
+        const progressEntries = await Promise.all(
+          running.map(async (b) => {
+            try {
+              const res = await axios.get(`/api/backups/${b.id}/progress`);
+              return [b.id, res.data] as const;
+            } catch {
+              return [b.id, null] as const;
+            }
+          }),
+        );
+
+        const next: Record<string, BackupProgress> = {};
+        for (const [id, progress] of progressEntries) {
+          if (progress) next[id] = progress;
+        }
+        setBackupProgress(next);
+
+        const logsRes = await axios.get('/api/backups/logs/recent?limit=120');
+        setInfoLogs(Array.isArray(logsRes.data) ? logsRes.data : []);
+      } catch {
+        // ignore polling errors in UI refresh loop
+      }
+    };
+
+    void poll();
+    const interval = setInterval(() => {
+      void poll();
+    }, 2000);
+    return () => clearInterval(interval);
+  }, [authenticated, activeTab, backups]);
 
   const downloadDocPdf = async (doc: Document) => {
     try {
@@ -511,6 +580,36 @@ export default function App() {
     } catch (err: any) {
       alert(err.response?.data?.error || err.message || 'Failed to download PDF');
     }
+  };
+
+  const formatDateTime = (value?: string | null) => {
+    if (!value) return 'Never';
+    try {
+      return new Date(value).toLocaleString();
+    } catch {
+      return 'Never';
+    }
+  };
+
+  const formatBytes = (bytes?: number) => {
+    if (!bytes || bytes <= 0) return '0 B';
+    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+    let value = bytes;
+    let unit = 0;
+    while (value >= 1024 && unit < units.length - 1) {
+      value /= 1024;
+      unit += 1;
+    }
+    return `${value.toFixed(unit === 0 ? 0 : 1)} ${units[unit]}`;
+  };
+
+  const getLastSyncForDevice = (deviceId: string) => {
+    const ts = documents
+      .filter((d) => d.device_id === deviceId && !!d.last_synced_at)
+      .map((d) => new Date(d.last_synced_at).getTime())
+      .filter((n) => Number.isFinite(n));
+    if (!ts.length) return null;
+    return new Date(Math.max(...ts)).toISOString();
   };
 
   return (
@@ -759,6 +858,54 @@ export default function App() {
                 {devices.map(dev => {
                     const latestBackup = getLatestBackupForDevice(dev.id);
                     const backupRunning = !!manualBackupStatus[dev.id] || latestBackup?.status === 'running';
+                    const latestProgress = latestBackup ? backupProgress[latestBackup.id] : null;
+                    const docsForDevice = documents.filter((d) => d.device_id === dev.id);
+                    const syncRunning = docsForDevice.some((d) => d.sync_status === 'syncing' || !!manualSyncStatus[d.id]);
+                    const syncErrored = docsForDevice.some((d) => d.sync_status === 'error');
+                    const lastSyncAt = getLastSyncForDevice(dev.id);
+
+                    const syncTone = syncRunning
+                      ? 'bg-blue-50 border-blue-200 text-blue-700'
+                      : syncErrored
+                        ? 'bg-red-50 border-red-200 text-red-700'
+                        : dev.sync_when_connected
+                          ? 'bg-green-50 border-green-200 text-green-700'
+                          : 'bg-stone-50 border-stone-200 text-stone-700';
+                    const syncLabel = syncRunning
+                      ? 'Sync: Running'
+                      : syncErrored
+                        ? 'Sync: Error'
+                        : latestBackup?.status === 'running' && dev.sync_when_connected
+                          ? 'Sync: Waiting (backup active)'
+                          : dev.sync_when_connected
+                            ? 'Sync: Enabled'
+                            : 'Sync: Disabled';
+
+                    const backupTone = backupRunning
+                      ? 'bg-blue-50 border-blue-200 text-blue-700'
+                      : latestBackup?.status === 'error'
+                        ? 'bg-red-50 border-red-200 text-red-700'
+                        : latestBackup?.status === 'partial'
+                          ? 'bg-amber-50 border-amber-200 text-amber-700'
+                          : latestBackup?.status === 'cancelled'
+                            ? 'bg-stone-100 border-stone-300 text-stone-700'
+                            : dev.backup_enabled
+                              ? 'bg-green-50 border-green-200 text-green-700'
+                              : 'bg-stone-50 border-stone-200 text-stone-700';
+                    const backupLabel = backupRunning
+                      ? 'Backup: Running'
+                      : latestBackup?.status === 'error'
+                        ? 'Backup: Error'
+                        : latestBackup?.status === 'partial'
+                          ? 'Backup: Partial'
+                          : latestBackup?.status === 'cancelled'
+                            ? 'Backup: Cancelled'
+                            : latestBackup?.status === 'success'
+                              ? 'Backup: Success'
+                              : dev.backup_enabled
+                                ? `Backup: Every ${dev.backup_frequency_hours}h`
+                                : 'Backup: Disabled';
+
                     return (
                     <div key={dev.id} className="rm-card bg-white p-6 rounded-2xl border border-stone-200 shadow-sm flex justify-between items-start gap-4">
                         <div>
@@ -770,35 +917,55 @@ export default function App() {
                                 {deviceStatus[dev.id] === 'checking' && <RefreshCw size={14} className="animate-spin text-stone-400" title="Checking..." />}
                             </div>
                             <p className="text-sm text-stone-500 font-mono mt-1">{dev.username}@{dev.host}:{dev.port}</p>
-                            <div className="mt-3 space-y-2 text-xs">
-                              <div className="p-2 rounded border border-stone-200 bg-stone-50">
-                                <p className="font-semibold text-stone-700">Sync</p>
-                                <p className="text-stone-500 mt-1">{dev.sync_when_connected ? 'Sync when connected: enabled' : 'Sync when connected: disabled'}</p>
-                              </div>
-                              <div className="p-2 rounded border border-stone-200 bg-stone-50">
-                                <p className="font-semibold text-stone-700">Backup</p>
-                                <p className="text-stone-500 mt-1">
-                                  {dev.backup_enabled
-                                    ? `Scheduled: every ${dev.backup_frequency_hours}h (when connected)`
-                                    : 'Scheduled backup: disabled'}
-                                </p>
-                                <p className="text-stone-400 mt-1">
-                                  Last backup: {dev.last_backup_at ? new Date(dev.last_backup_at).toLocaleString() : 'Never'}
-                                </p>
-                                {latestBackup && (
-                                  <p className={`mt-1 ${latestBackup.status === 'error' ? 'text-red-600' : latestBackup.status === 'partial' ? 'text-amber-600' : latestBackup.status === 'running' ? 'text-blue-600' : 'text-green-600'}`}>
-                                    Latest: {latestBackup.status}
-                                  </p>
-                                )}
+                            <div className="mt-3 text-xs">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full border ${syncTone}`}>
+                                  {syncRunning ? <RefreshCw size={12} className="animate-spin" /> : syncErrored ? <XCircle size={12} /> : <CheckCircle size={12} />}
+                                  <span className="font-medium">{syncLabel}</span>
+                                  <span className="opacity-70">• Last sync: {formatDateTime(lastSyncAt)}</span>
+                                </div>
+
+                                <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full border ${backupTone}`}>
+                                  {backupRunning ? <RefreshCw size={12} className="animate-spin" /> : latestBackup?.status === 'error' ? <XCircle size={12} /> : latestBackup?.status === 'partial' ? <Clock size={12} /> : <CheckCircle size={12} />}
+                                  <span className="font-medium">{backupLabel}</span>
+                                  <span className="opacity-70">• Last backup: {formatDateTime(dev.last_backup_at)}</span>
+                                </div>
+
                                 <button
                                   onClick={() => runDeviceBackup(dev.id)}
                                   disabled={backupRunning}
-                                  className="mt-2 px-3 py-1.5 text-xs rounded-lg bg-stone-900 text-white hover:bg-stone-800 disabled:opacity-60"
+                                  className="px-3 py-1.5 text-xs rounded-full bg-stone-900 text-white hover:bg-stone-800 disabled:opacity-60"
                                 >
                                   {backupRunning ? 'Backing up…' : 'Run Backup Now'}
                                 </button>
+                                {backupRunning && latestBackup && (
+                                  <button
+                                    onClick={() => cancelDeviceBackup(latestBackup.id)}
+                                    className="px-3 py-1.5 text-xs rounded-full bg-red-600 text-white hover:bg-red-500"
+                                  >
+                                    Cancel Backup
+                                  </button>
+                                )}
                               </div>
-                            </div>
+
+                              {backupRunning && latestProgress && (
+                                <div className="mt-3 p-3 rounded-lg border border-blue-200 bg-blue-50">
+                                  <div className="h-2 bg-blue-100 rounded overflow-hidden">
+                                    <div
+                                      className="h-2 bg-blue-500"
+                                      style={{ width: `${Math.max(0, Math.min(100, latestProgress.percent || 0))}%` }}
+                                    />
+                                  </div>
+                                  <p className="text-[11px] text-blue-700 mt-2">
+                                    Phase: {latestProgress.phase} • {latestProgress.percent || 0}% • {(latestProgress.speedBytesPerSec ? (latestProgress.speedBytesPerSec / (1024 * 1024)).toFixed(2) : '0.00')} MB/s
+                                  </p>
+                                  <p className="text-[11px] text-blue-700 mt-1">
+                                    {formatBytes(latestProgress.transferredBytes)} / {formatBytes(latestProgress.totalBytes)} • {latestProgress.totalFiles} files
+                                    {latestProgress.message ? ` • ${latestProgress.message}` : ''}
+                                  </p>
+                                </div>
+                              )}
+                              </div>
                             <p className="text-xs text-stone-400 mt-2">Last connected: {new Date(dev.last_connected_at).toLocaleString()}</p>
                         </div>
                         <div className="flex gap-2">
@@ -830,6 +997,20 @@ export default function App() {
                         </div>
                     </div>
                 )})}
+            </div>
+
+            <div className="rm-card bg-white p-4 rounded-2xl border border-stone-200 shadow-sm">
+              <h3 className="font-semibold mb-2">Recent Activity Log</h3>
+              <div className="max-h-52 overflow-auto text-xs space-y-1">
+                {infoLogs.length === 0 ? (
+                  <p className="text-stone-500">No recent activity yet.</p>
+                ) : infoLogs.slice().reverse().map((row, idx) => (
+                  <div key={`${row.ts}-${idx}`} className="border-b border-stone-100 pb-1">
+                    <span className="text-stone-400">{new Date(row.ts).toLocaleTimeString()} </span>
+                    <span className={row.level === 'error' ? 'text-red-600' : row.level === 'warn' ? 'text-amber-600' : 'text-stone-700'}>{row.event}</span>
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
         )}
