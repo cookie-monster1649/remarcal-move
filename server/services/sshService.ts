@@ -58,10 +58,33 @@ export class SSHService {
       };
     }
 
+    const sshKeygenCandidates = [
+      process.env.SSH_KEYGEN_PATH,
+      '/usr/bin/ssh-keygen',
+      '/bin/ssh-keygen',
+      '/usr/local/bin/ssh-keygen',
+      '/opt/homebrew/bin/ssh-keygen',
+    ].filter((v): v is string => !!v);
+
+    const sshKeygenPath = sshKeygenCandidates.find((candidate) => {
+      try {
+        fs.accessSync(candidate, fs.constants.X_OK);
+        return true;
+      } catch {
+        return false;
+      }
+    });
+
+    if (!sshKeygenPath) {
+      throw new Error(
+        'SSH key generation unavailable: ssh2 keygen helper missing and ssh-keygen not found. Set SSH_KEYGEN_PATH to your ssh-keygen binary path.',
+      );
+    }
+
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'remarcal-keygen-'));
     const keyPath = path.join(tempDir, 'id_ed25519');
     try {
-      const gen = spawnSync('ssh-keygen', ['-t', 'ed25519', '-N', '', '-C', comment, '-f', keyPath], {
+      const gen = spawnSync(sshKeygenPath, ['-t', 'ed25519', '-N', '', '-C', comment, '-f', keyPath], {
         encoding: 'utf8',
       });
 
