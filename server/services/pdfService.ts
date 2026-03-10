@@ -234,38 +234,46 @@ export class PDFService {
     const allDays = eachDayOfInterval({ start: effectiveStart, end: effectiveEnd });
     
     const pageMap = {
-      year: 1,
+      cover: 1,
+      year: 2,
       months: {} as Record<string, number>,
       weeks: {} as Record<string, number>,
       days: {} as Record<string, number>,
     };
 
-    let currentPage = 1; // Year view is page 1
-    
-    let currentMonthKey = '';
-    let currentWeekKey = '';
-    
+    const monthsInYear = Array.from({ length: 12 }, (_, i) => new Date(config.year, i, 1));
+    const weekStarts: Date[] = [];
+    for (let d = new Date(effectiveStart); d <= effectiveEnd; d = addDays(d, 7)) {
+      weekStarts.push(new Date(d));
+    }
+    const uniqueWeekStarts: Date[] = [];
+    const seenWeekKeys = new Set<string>();
+    weekStarts.forEach((weekStartDate) => {
+      const weekKey = getTzFormat(weekStartDate, 'yyyy-ww', { weekStartsOn: 1 });
+      if (!seenWeekKeys.has(weekKey)) {
+        seenWeekKeys.add(weekKey);
+        uniqueWeekStarts.push(weekStartDate);
+      }
+    });
+
+    let currentPage = pageMap.year;
+
+    // Section 1 after year: all month pages
+    monthsInYear.forEach((monthDate) => {
+      const monthKey = getTzFormat(monthDate, 'yyyy-MM');
+      currentPage++;
+      pageMap.months[monthKey] = currentPage;
+    });
+
+    // Section 2: all week pages
+    uniqueWeekStarts.forEach((weekStartDate) => {
+      const weekKey = getTzFormat(weekStartDate, 'yyyy-ww', { weekStartsOn: 1 });
+      currentPage++;
+      pageMap.weeks[weekKey] = currentPage;
+    });
+
+    // Section 3: all day pages
     allDays.forEach((day) => {
-      const monthKey = getTzFormat(day, 'yyyy-MM');
-      const weekKey = getTzFormat(day, 'yyyy-ww', { weekStartsOn: 1 });
-      
-      // New Month?
-      if (monthKey !== currentMonthKey && parseInt(getTzFormat(day, 'd')) === 1) {
-        currentPage++;
-        pageMap.months[monthKey] = currentPage;
-        currentMonthKey = monthKey;
-      }
-      
-      // New Week?
-      if (weekKey !== currentWeekKey) {
-        if (!pageMap.weeks[weekKey]) {
-            currentPage++;
-            pageMap.weeks[weekKey] = currentPage;
-            currentWeekKey = weekKey;
-        }
-      }
-      
-      // Daily View
       currentPage++;
       pageMap.days[getTzDateStr(day)] = currentPage;
     });
@@ -360,8 +368,10 @@ export class PDFService {
     };
 
     // 4. Render Pages
-    
-    // --- Page 1: Year View ---
+    // Page 1 is intentionally left blank for cover/writing.
+
+    // --- Page 2: Year View ---
+    doc.addPage();
     doc.setFontSize(14);
     doc.setFont("helvetica", "normal");
     doc.text(`${config.year} Calendar`, pageWidth / 2, 10, { align: 'center' });
@@ -428,29 +438,18 @@ export class PDFService {
         });
     }
 
-    // --- Chronological Pages ---
-    
-    currentMonthKey = '';
-    currentWeekKey = '';
-    const renderedWeeks = new Set<string>();
-
-    allDays.forEach((day) => {
-        const monthKey = getTzFormat(day, 'yyyy-MM');
-        const weekKey = getTzFormat(day, 'yyyy-ww', { weekStartsOn: 1 });
-        
-        // --- Month View ---
-        if (monthKey !== currentMonthKey && parseInt(getTzFormat(day, 'd')) === 1) {
+    // --- Section A: Month Views (all months) ---
+    monthsInYear.forEach((monthDate) => {
             doc.addPage();
-            currentMonthKey = monthKey;
             
             doc.setFontSize(14);
             doc.setFont("helvetica", "normal");
-            doc.text(getTzFormat(day, 'MMMM yyyy'), pageWidth / 2, 10, { align: 'center' });
+            doc.text(getTzFormat(monthDate, 'MMMM yyyy'), pageWidth / 2, 10, { align: 'center' });
             
-            drawNavBar(day, false);
+            drawNavBar(monthDate, false);
             
-            const mStart = startOfMonth(day);
-            const mEnd = endOfMonth(day);
+            const mStart = startOfMonth(monthDate);
+            const mEnd = endOfMonth(monthDate);
             const gridStart = startOfWeek(mStart, { weekStartsOn: 1 });
             const gridEnd = endOfWeek(mEnd, { weekStartsOn: 1 });
             
@@ -540,7 +539,7 @@ export class PDFService {
                 const x = gridX + c*cellW;
                 const y = gridY + r*cellH;
                 
-                const isCurrentMonth = getTzFormat(d, 'yyyy-MM') === getTzFormat(day, 'yyyy-MM');
+                const isCurrentMonth = getTzFormat(d, 'yyyy-MM') === getTzFormat(monthDate, 'yyyy-MM');
                 doc.setTextColor(isCurrentMonth ? 0 : 150);
                 
                 doc.setFontSize(7);
@@ -604,21 +603,20 @@ export class PDFService {
                 }
               });
             }
-        }
-        
-        // --- Week View ---
-        if (!renderedWeeks.has(weekKey)) {
-             renderedWeeks.add(weekKey);
+    });
+    
+    // --- Section B: Week Views (all weeks) ---
+    uniqueWeekStarts.forEach((weekStartDate) => {
              doc.addPage();
              
-             const wStart = startOfWeek(day, { weekStartsOn: 1 });
-             const wEnd = endOfWeek(day, { weekStartsOn: 1 });
+             const wStart = startOfWeek(weekStartDate, { weekStartsOn: 1 });
+             const wEnd = endOfWeek(weekStartDate, { weekStartsOn: 1 });
              
              doc.setFontSize(12);
              doc.setFont("helvetica", "normal");
-             doc.text(`Week ${getTzFormat(day, 'ww', { weekStartsOn: 1 })} | ${getTzFormat(wStart, 'MMM d')} - ${getTzFormat(wEnd, 'MMM d')}`, pageWidth/2, 10, { align: 'center' });
+             doc.text(`Week ${getTzFormat(weekStartDate, 'ww', { weekStartsOn: 1 })} | ${getTzFormat(wStart, 'MMM d')} - ${getTzFormat(wEnd, 'MMM d')}`, pageWidth/2, 10, { align: 'center' });
              
-             drawNavBar(day);
+             drawNavBar(weekStartDate);
              
              const gridX = 5;
              const gridY = 25;
@@ -787,9 +785,10 @@ export class PDFService {
              doc.setFontSize(10);
              doc.setTextColor(0);
              doc.text("Notes", notesX + 5, notesY + 6);
-        }
-        
-        // --- Daily View ---
+    });
+    
+    // --- Section C: Daily Views (all days) ---
+    allDays.forEach((day) => {
         doc.addPage();
         
         doc.setFontSize(14);
