@@ -58,7 +58,6 @@ export function initDb() {
       title TEXT NOT NULL,
       type TEXT DEFAULT 'pdf',
       remote_path TEXT,
-      cover_pdf_path TEXT,
       last_synced_at TEXT,
       sync_status TEXT DEFAULT 'idle', -- idle, checking, syncing, error
       last_error TEXT,
@@ -146,12 +145,6 @@ export function initDb() {
     db.exec("ALTER TABLE documents ADD COLUMN timezone TEXT DEFAULT 'UTC'");
   }
 
-  const hasCoverPdfPath = docsTableInfo.some(col => col.name === 'cover_pdf_path');
-  if (!hasCoverPdfPath) {
-    console.log('Migrating documents: adding cover_pdf_path column');
-    db.exec('ALTER TABLE documents ADD COLUMN cover_pdf_path TEXT');
-  }
-
   const hasSyncEnabled = docsTableInfo.some(col => col.name === 'sync_enabled');
   const hasSyncSchedule = docsTableInfo.some(col => col.name === 'sync_schedule');
   if (hasSyncEnabled || hasSyncSchedule) {
@@ -166,7 +159,6 @@ export function initDb() {
           title TEXT NOT NULL,
           type TEXT DEFAULT 'pdf',
           remote_path TEXT,
-          cover_pdf_path TEXT,
           last_synced_at TEXT,
           sync_status TEXT DEFAULT 'idle',
           last_error TEXT,
@@ -181,11 +173,11 @@ export function initDb() {
         );
 
         INSERT INTO documents (
-          id, title, type, remote_path, cover_pdf_path, last_synced_at, sync_status, last_error,
+          id, title, type, remote_path, last_synced_at, sync_status, last_error,
           year, timezone, caldav_account_id, device_id, created_at, updated_at
         )
         SELECT
-          id, title, type, remote_path, NULL as cover_pdf_path, last_synced_at, sync_status, last_error,
+          id, title, type, remote_path, last_synced_at, sync_status, last_error,
           year, timezone, caldav_account_id, device_id, created_at, updated_at
         FROM documents_old;
 

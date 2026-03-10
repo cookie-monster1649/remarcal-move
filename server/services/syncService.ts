@@ -6,7 +6,6 @@ import { decrypt } from './encryptionService.js';
 import { subscriptionService } from './subscriptionService.js';
 import * as fs from 'fs';
 import * as path from 'path';
-import { PDFDocument } from 'pdf-lib';
 import { traceConfig } from '../utils/traceConfig.js';
 
 const calDavService = new CalDavService();
@@ -42,36 +41,6 @@ function buildDeviceSshConfig(device: any) {
 }
 
 export class SyncService {
-  private resolveCoverPath(inputPath: string): string {
-    if (path.isAbsolute(inputPath)) return inputPath;
-    const dataDir = process.env.DATA_DIR || './data';
-    return path.resolve(path.join(dataDir, inputPath));
-  }
-
-  private async prependCoverIfConfigured(calendarPdfBuffer: Buffer, coverPath?: string | null): Promise<Buffer> {
-    const trimmed = (coverPath || '').trim();
-    if (!trimmed) return calendarPdfBuffer;
-
-    const resolvedCoverPath = this.resolveCoverPath(trimmed);
-    if (!fs.existsSync(resolvedCoverPath)) {
-      throw new Error(`Cover PDF not found: ${resolvedCoverPath}`);
-    }
-
-    const coverBytes = fs.readFileSync(resolvedCoverPath);
-    const coverDoc = await PDFDocument.load(coverBytes);
-    const calendarDoc = await PDFDocument.load(calendarPdfBuffer);
-    const merged = await PDFDocument.create();
-
-    const coverPages = await merged.copyPages(coverDoc, coverDoc.getPageIndices());
-    coverPages.forEach((page) => merged.addPage(page));
-
-    const calendarPages = await merged.copyPages(calendarDoc, calendarDoc.getPageIndices());
-    calendarPages.forEach((page) => merged.addPage(page));
-
-    const mergedBytes = await merged.save();
-    return Buffer.from(mergedBytes);
-  }
-
   async generateDocumentPDF(docId: string) {
     const doc = db.prepare('SELECT * FROM documents WHERE id = ?').get(docId) as any;
     if (!doc) throw new Error(`Document ${docId} not found`);
@@ -205,10 +174,9 @@ export class SyncService {
     }
 
     const pdfBuffer = pdfService.generate(allEvents, { year, timezone: targetTimezone });
-    const mergedPdfBuffer = await this.prependCoverIfConfigured(pdfBuffer, doc.cover_pdf_path);
     const localPath = path.join(process.env.DATA_DIR || './data', 'docs', `${docId}.pdf`);
     fs.mkdirSync(path.dirname(localPath), { recursive: true });
-    fs.writeFileSync(localPath, mergedPdfBuffer);
+    fs.writeFileSync(localPath, pdfBuffer);
 
     return { doc, localPath };
   }

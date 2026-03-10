@@ -47,7 +47,6 @@ router.post('/', (req, res) => {
     const caldav_account_ids = optionalStringArray(req.body.caldav_account_ids, 'caldav_account_ids') || [];
     const subscription_ids = optionalStringArray(req.body.subscription_ids, 'subscription_ids') || [];
     const device_id = optionalString(req.body.device_id, 'device_id');
-    const cover_pdf_path = optionalString(req.body.cover_pdf_path, 'cover_pdf_path');
     const year = optionalInteger(req.body.year, 'year', 1970, 2100) || new Date().getFullYear();
     const timezone = optionalString(req.body.timezone, 'timezone') || 'UTC';
 
@@ -55,9 +54,9 @@ router.post('/', (req, res) => {
 
     const transaction = db.transaction(() => {
       db.prepare(`
-        INSERT INTO documents (id, title, type, remote_path, cover_pdf_path, caldav_account_id, device_id, year, timezone)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(id, title, 'pdf', remote_path, cover_pdf_path || null, caldav_account_ids?.[0] || null, device_id, year || new Date().getFullYear(), timezone || 'UTC');
+        INSERT INTO documents (id, title, type, remote_path, caldav_account_id, device_id, year, timezone)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(id, title, 'pdf', remote_path, caldav_account_ids?.[0] || null, device_id, year || new Date().getFullYear(), timezone || 'UTC');
 
       if (Array.isArray(caldav_account_ids)) {
         const insertAccount = db.prepare('INSERT INTO document_accounts (document_id, account_id) VALUES (?, ?)');
@@ -97,16 +96,15 @@ router.put('/:id', (req, res) => {
     const caldav_account_ids = optionalStringArray(req.body.caldav_account_ids, 'caldav_account_ids') || [];
     const subscription_ids = optionalStringArray(req.body.subscription_ids, 'subscription_ids') || [];
     const device_id = optionalString(req.body.device_id, 'device_id');
-    const cover_pdf_path = optionalString(req.body.cover_pdf_path, 'cover_pdf_path');
     const year = optionalInteger(req.body.year, 'year', 1970, 2100) || new Date().getFullYear();
     const timezone = optionalString(req.body.timezone, 'timezone') || 'UTC';
 
     const transaction = db.transaction(() => {
       db.prepare(`
         UPDATE documents 
-        SET title = ?, remote_path = ?, cover_pdf_path = ?, caldav_account_id = ?, device_id = ?, year = ?, timezone = ?, updated_at = CURRENT_TIMESTAMP
+        SET title = ?, remote_path = ?, caldav_account_id = ?, device_id = ?, year = ?, timezone = ?, updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
-      `).run(title, remote_path, cover_pdf_path || null, caldav_account_ids?.[0] || null, device_id, year, timezone || 'UTC', id);
+      `).run(title, remote_path, caldav_account_ids?.[0] || null, device_id, year, timezone || 'UTC', id);
 
       // Update linked accounts
       db.prepare('DELETE FROM document_accounts WHERE document_id = ?').run(id);

@@ -10,7 +10,6 @@ interface Document {
   title: string;
   type: string;
   remote_path: string;
-  cover_pdf_path?: string | null;
   last_synced_at: string;
   sync_status: 'idle' | 'syncing' | 'error';
   last_error: string;
@@ -76,7 +75,6 @@ export default function App() {
   const [docForm, setDocForm] = useState({
     title: '',
     remote_path: '/home/root/.local/share/remarkable/xochitl/calendar.pdf',
-    cover_pdf_path: '',
     year: new Date().getFullYear(),
     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
     caldav_account_ids: [] as string[],
@@ -582,7 +580,6 @@ export default function App() {
                     setDocForm({
                         title: '',
                         remote_path: '/home/root/.local/share/remarkable/xochitl/calendar.pdf',
-                        cover_pdf_path: '',
                         year: new Date().getFullYear(),
                         timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
                         caldav_account_ids: accounts.length > 0 ? [accounts[0].id] : [],
@@ -651,7 +648,6 @@ export default function App() {
                                         setDocForm({
                                             title: doc.title,
                                             remote_path: doc.remote_path,
-                                            cover_pdf_path: doc.cover_pdf_path || '',
                                             year: doc.year || new Date().getFullYear(),
                                             timezone: doc.timezone || 'UTC',
                                             caldav_account_ids: doc.caldav_account_ids || (doc.caldav_account_id ? [doc.caldav_account_id] : []),
@@ -955,17 +951,6 @@ export default function App() {
                             value={docForm.remote_path}
                             onChange={e => setDocForm({...docForm, remote_path: e.target.value})}
                         />
-                    </div>
-                    <div>
-                        <label className="block text-sm font-medium mb-1">Cover PDF Path (optional)</label>
-                        <input
-                            type="text"
-                            className="w-full px-3 py-2 border rounded-lg font-mono text-xs"
-                            placeholder="/absolute/path/to/cover.pdf or docs/cover.pdf"
-                            value={docForm.cover_pdf_path}
-                            onChange={e => setDocForm({ ...docForm, cover_pdf_path: e.target.value })}
-                        />
-                        <p className="text-xs text-stone-500 mt-1">Prepends this PDF before generated calendar pages.</p>
                     </div>
                     <div>
                         <label className="block text-sm font-medium mb-2">CalDAV Accounts</label>
