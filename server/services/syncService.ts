@@ -192,15 +192,26 @@ export class SyncService {
 
     try {
       if (!doc.device_id) {
-        throw new Error('Device must be configured for sync');
+        infoLogService.write('sync.skipped', { docId, reason: 'device_not_configured' }, 'warn');
+        const err: any = new Error('Device must be configured for sync');
+        err.syncSkipped = true;
+        throw err;
       }
 
       const device = db.prepare('SELECT * FROM devices WHERE id = ?').get(doc.device_id) as any;
-      if (!device) throw new Error('Device not found');
+      if (!device) {
+        infoLogService.write('sync.skipped', { docId, deviceId: doc.device_id, reason: 'device_not_found' }, 'warn');
+        const err: any = new Error('Device not found');
+        err.syncSkipped = true;
+        throw err;
+      }
 
       const lock = deviceOperationService.tryAcquire(device.id, 'sync');
       if (lock.ok === false) {
-        throw new Error(lock.reason);
+        infoLogService.write('sync.skipped', { docId, deviceId: device.id, reason: 'device_busy', detail: lock.reason }, 'warn');
+        const err: any = new Error(lock.reason);
+        err.syncSkipped = true;
+        throw err;
       }
 
       // Update status to syncing
@@ -225,7 +236,11 @@ export class SyncService {
     } catch (error: any) {
       console.error(`Sync failed for doc ${docId}:`, error);
       db.prepare('UPDATE documents SET sync_status = ?, last_error = ? WHERE id = ?').run('error', error.message, docId);
-      infoLogService.write('sync.failed', { docId, error: error.message }, 'error');
+      if (error?.syncSkipped) {
+        infoLogService.write('sync.skipped', { docId, reason: 'precondition_failed', detail: error.message }, 'warn');
+      } else {
+        infoLogService.write('sync.failed', { docId, error: error.message }, 'error');
+      }
       throw error;
     }
   }

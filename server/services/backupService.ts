@@ -50,6 +50,32 @@ function getDataDir(): string {
   return process.env.DATA_DIR || './data';
 }
 
+function cloneDirectoryWithHardlinks(sourceDir: string, targetDir: string): void {
+  fs.mkdirSync(targetDir, { recursive: true });
+  const entries = fs.readdirSync(sourceDir, { withFileTypes: true });
+  for (const entry of entries) {
+    const srcPath = path.join(sourceDir, entry.name);
+    const dstPath = path.join(targetDir, entry.name);
+    if (entry.isDirectory()) {
+      cloneDirectoryWithHardlinks(srcPath, dstPath);
+      continue;
+    }
+    if (entry.isFile()) {
+      try {
+        fs.linkSync(srcPath, dstPath);
+      } catch {
+        // Fallback for environments/filesystems that do not support hard links
+        fs.copyFileSync(srcPath, dstPath);
+      }
+      continue;
+    }
+    if (entry.isSymbolicLink()) {
+      const target = fs.readlinkSync(srcPath);
+      fs.symlinkSync(target, dstPath);
+    }
+  }
+}
+
 function buildDeviceSshConfig(device: any) {
   const fsPrivateKey = sshKeyManager.loadDevicePrivateKey(device.id);
   const decryptedPrivateKey = fsPrivateKey || (device.encrypted_private_key ? decrypt(device.encrypted_private_key) : undefined);
@@ -80,20 +106,32 @@ export class BackupService {
 
   cancelBackup(backupId: string): void {
     cancelRequested.add(backupId);
+    const current = progressByBackupId.get(backupId);
+    if (current) {
+      progressByBackupId.set(backupId, {
+        ...current,
+        updatedAt: new Date().toISOString(),
+        message: 'Cancel requested',
+      });
+    }
+    infoLogService.write('backup.cancel_requested', { backupId }, 'warn');
   }
 
   async startDeviceBackup(deviceId: string): Promise<{ backupId: string }> {
     const device = db.prepare('SELECT * FROM devices WHERE id = ?').get(deviceId) as any;
     if (!device) {
+      infoLogService.write('backup.skipped', { deviceId, reason: 'device_not_found' }, 'warn');
       throw new Error('Device not found');
     }
 
     if (runningByDevice.has(deviceId)) {
+      infoLogService.write('backup.skipped', { deviceId, reason: 'already_running' }, 'warn');
       throw new Error('A backup is already running for this device');
     }
 
     const lock = deviceOperationService.tryAcquire(deviceId, 'backup');
     if (lock.ok === false) {
+      infoLogService.write('backup.skipped', { deviceId, reason: 'device_busy', detail: lock.reason }, 'warn');
       throw new Error(lock.reason);
     }
 
@@ -123,7 +161,10 @@ export class BackupService {
   private async runBackupJob(backupId: string, device: any): Promise<void> {
     const dataDir = getDataDir();
     const timestamp = formatSnapshotTimestamp();
-    const rootFinal = path.join(dataDir, 'backups', device.id, timestamp);
+    const deviceBackupsRoot = path.join(dataDir, 'backups', device.id);
+    const mirrorRoot = path.join(deviceBackupsRoot, '.mirror');
+    const mirrorXochitlPath = path.join(mirrorRoot, 'xochitl');
+    const rootFinal = path.join(deviceBackupsRoot, timestamp);
     const root = `${rootFinal}.inprogress`;
     const xochitlPath = path.join(root, 'xochitl');
     const manifestPath = path.join(root, 'manifest.json');
@@ -149,7 +190,8 @@ export class BackupService {
     };
 
     try {
-      fs.mkdirSync(xochitlPath, { recursive: true });
+      fs.mkdirSync(mirrorXochitlPath, { recursive: true });
+      fs.mkdirSync(root, { recursive: true });
 
       const ssh = new SSHService(buildDeviceSshConfig(device));
       setProgress({ phase: 'preflight', message: 'Assessing remote data' });
@@ -168,7 +210,7 @@ export class BackupService {
         totalBytes: preflight.totalBytes,
       });
 
-      const snapshot = await ssh.snapshotXochitlDirectory(XOCHITL_REMOTE_PATH, xochitlPath, {
+      const snapshot = await ssh.snapshotXochitlDirectory(XOCHITL_REMOTE_PATH, mirrorXochitlPath, {
         expectedTotalBytes: preflight.totalBytes,
         isCancelled: () => cancelRequested.has(backupId),
         onProgress: (p) => {
@@ -189,7 +231,7 @@ export class BackupService {
             totalFiles: preflight.totalFiles,
             speedBytesPerSec: speed,
             percent,
-            message: p.currentFile || 'Transferring',
+            message: p.currentFile || 'Incremental mirror sync',
           });
         },
       });
@@ -197,6 +239,9 @@ export class BackupService {
       if (cancelRequested.has(backupId)) {
         throw new Error('Backup cancelled');
       }
+
+      setProgress({ phase: 'finalize', message: 'Creating snapshot from mirror' });
+      cloneDirectoryWithHardlinks(mirrorXochitlPath, xochitlPath);
 
       setProgress({ phase: 'manifest', message: 'Generating manifest' });
 
@@ -242,6 +287,8 @@ export class BackupService {
         backupId,
         deviceId: device.id,
         status,
+        method: snapshot.method,
+        snapshotStrategy: 'mirror_hardlink',
         totalBytes: manifest.stats.totalBytes,
         totalFiles: manifest.stats.totalFiles,
       });
@@ -285,15 +332,30 @@ export class BackupService {
     const devices = db.prepare('SELECT * FROM devices WHERE backup_enabled = 1').all() as any[];
 
     for (const device of devices) {
-      if (connectedDeviceIds && !connectedDeviceIds.has(device.id)) continue;
-      if (runningByDevice.has(device.id)) continue;
-      if (deviceOperationService.getCurrent(device.id)) continue;
+      if (connectedDeviceIds && !connectedDeviceIds.has(device.id)) {
+        infoLogService.write('backup.skipped', { deviceId: device.id, reason: 'device_offline' });
+        continue;
+      }
+      if (runningByDevice.has(device.id)) {
+        infoLogService.write('backup.skipped', { deviceId: device.id, reason: 'already_running' });
+        continue;
+      }
+      if (deviceOperationService.getCurrent(device.id)) {
+        infoLogService.write('backup.skipped', { deviceId: device.id, reason: 'device_busy' });
+        continue;
+      }
 
       const running = db.prepare(
         "SELECT id FROM device_backups WHERE device_id = ? AND status = 'running' LIMIT 1",
       ).get(device.id) as any;
-      if (running) continue;
-      if (!this.isBackupDue(device)) continue;
+      if (running) {
+        infoLogService.write('backup.skipped', { deviceId: device.id, reason: 'backup_row_running' });
+        continue;
+      }
+      if (!this.isBackupDue(device)) {
+        infoLogService.write('backup.skipped', { deviceId: device.id, reason: 'not_due' });
+        continue;
+      }
 
       try {
         await this.startDeviceBackup(device.id);

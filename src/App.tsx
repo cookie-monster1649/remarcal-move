@@ -145,6 +145,7 @@ export default function App() {
   const [subscriptionFetchStatus, setSubscriptionFetchStatus] = useState<Record<string, { state: 'idle' | 'running' | 'success' | 'error'; message?: string; count?: number; at?: string }>>({});
   const [manualSyncStatus, setManualSyncStatus] = useState<Record<string, boolean>>({});
   const [manualBackupStatus, setManualBackupStatus] = useState<Record<string, boolean>>({});
+  const [cancellingBackupStatus, setCancellingBackupStatus] = useState<Record<string, boolean>>({});
   const [enrollKeyStatus, setEnrollKeyStatus] = useState<Record<string, boolean>>({});
 
   const [showDeviceForm, setShowDeviceForm] = useState(false);
@@ -185,6 +186,18 @@ export default function App() {
       setSubscriptions(subscriptionsData);
       setDevices(devicesData);
       setBackups(backupsData);
+      setCancellingBackupStatus((prev) => {
+        const runningIds = new Set(
+          backupsData
+            .filter((b: DeviceBackup) => b.status === 'running')
+            .map((b: DeviceBackup) => b.id),
+        );
+        const next: Record<string, boolean> = {};
+        for (const id of Object.keys(prev)) {
+          if (runningIds.has(id)) next[id] = true;
+        }
+        return next;
+      });
       setError(null);
     } catch (err: any) {
       setError(err.response?.data?.error || err.message);
@@ -512,10 +525,16 @@ export default function App() {
   };
 
   const cancelDeviceBackup = async (backupId: string) => {
+    setCancellingBackupStatus(prev => ({ ...prev, [backupId]: true }));
     try {
       await axios.post(`/api/backups/${backupId}/cancel`);
       await fetchData();
     } catch (err: any) {
+      setCancellingBackupStatus(prev => {
+        const next = { ...prev };
+        delete next[backupId];
+        return next;
+      });
       alert(err.response?.data?.error || err.message || 'Failed to cancel backup');
     }
   };
@@ -859,6 +878,7 @@ export default function App() {
                 {devices.map(dev => {
                     const latestBackup = getLatestBackupForDevice(dev.id);
                     const backupRunning = !!manualBackupStatus[dev.id] || latestBackup?.status === 'running';
+                    const backupCancelling = !!(latestBackup && cancellingBackupStatus[latestBackup.id]);
                     const latestProgress = latestBackup ? backupProgress[latestBackup.id] : null;
                     const keyEnrolling = !!enrollKeyStatus[dev.id];
                     const docsForDevice = documents.filter((d) => d.device_id === dev.id);
@@ -894,9 +914,9 @@ export default function App() {
                                 {syncRunning ? <RefreshCw size={12} className="animate-spin" /> : syncErrored ? <XCircle size={12} /> : <CheckCircle size={12} />}
                                 <span>{syncRunning ? 'Sync: Running' : syncErrored ? 'Sync: Error' : dev.sync_when_connected ? 'Sync: Enabled' : 'Sync: Disabled'}</span>
                               </div>
-                              <div className={`flex items-center gap-2 px-3 py-1 rounded-full border ${backupRunning ? 'bg-blue-50 border-blue-200 text-blue-700' : latestBackup?.status === 'error' ? 'bg-red-50 border-red-200 text-red-700' : latestBackup?.status === 'partial' ? 'bg-amber-50 border-amber-200 text-amber-700' : 'bg-stone-50 border-stone-200 text-stone-700'}`}>
+                              <div className={`flex items-center gap-2 px-3 py-1 rounded-full border ${backupRunning ? (backupCancelling ? 'bg-amber-50 border-amber-200 text-amber-700' : 'bg-blue-50 border-blue-200 text-blue-700') : latestBackup?.status === 'error' ? 'bg-red-50 border-red-200 text-red-700' : latestBackup?.status === 'partial' ? 'bg-amber-50 border-amber-200 text-amber-700' : 'bg-stone-50 border-stone-200 text-stone-700'}`}>
                                 {backupRunning ? <RefreshCw size={12} className="animate-spin" /> : latestBackup?.status === 'error' ? <XCircle size={12} /> : <CheckCircle size={12} />}
-                                <span>Backup: {backupRunning ? 'Running' : latestBackup?.status || (dev.backup_enabled ? `Every ${dev.backup_frequency_hours}h` : 'Disabled')}</span>
+                                <span>Backup: {backupRunning ? (backupCancelling ? 'Cancelling…' : 'Running') : latestBackup?.status || (dev.backup_enabled ? `Every ${dev.backup_frequency_hours}h` : 'Disabled')}</span>
                                 <span className="opacity-70">• Last: {formatDateTime(dev.last_backup_at)}</span>
                               </div>
                               <button
@@ -909,9 +929,10 @@ export default function App() {
                               {backupRunning && latestBackup && (
                                 <button
                                   onClick={() => cancelDeviceBackup(latestBackup.id)}
-                                  className="px-3 py-1 text-xs rounded-full bg-red-600 text-white hover:bg-red-500"
+                                  disabled={backupCancelling}
+                                  className="px-3 py-1 text-xs rounded-full bg-red-600 text-white hover:bg-red-500 disabled:opacity-60"
                                 >
-                                  Cancel Backup
+                                  {backupCancelling ? 'Cancelling…' : 'Cancel Backup'}
                                 </button>
                               )}
                               {backupRunning && latestProgress && (
@@ -1278,6 +1299,13 @@ export default function App() {
                 <form onSubmit={handleDeviceSubmit} className="space-y-4">
                     <div className="p-3 rounded-lg border border-stone-200 bg-stone-50">
                       <p className="text-xs uppercase tracking-wide text-stone-500 font-semibold mb-2">Connection</p>
+                    {editingDevice && (
+                      <div className="mb-3 text-xs">
+                        <span className={`px-2 py-0.5 rounded-full border ${editingDevice.auth_mode === 'key' ? 'bg-green-50 border-green-200 text-green-700' : 'bg-amber-50 border-amber-200 text-amber-700'}`}>
+                          Current auth: {editingDevice.auth_mode === 'key' ? 'SSH key' : 'Password'}
+                        </span>
+                      </div>
+                    )}
                     <div>
                         <label className="block text-sm font-medium mb-1">Name</label>
                         <input 
@@ -1377,10 +1405,16 @@ export default function App() {
                           type="checkbox"
                           id="allow_password_fallback"
                           checked={deviceForm.allow_password_fallback}
+                          disabled={editingDevice?.auth_mode === 'key'}
                           onChange={e => setDeviceForm({ ...deviceForm, allow_password_fallback: e.target.checked })}
                         />
-                        <label htmlFor="allow_password_fallback" className="text-xs text-stone-600">Allow password fallback for manual connection checks</label>
+                        <label htmlFor="allow_password_fallback" className={`text-xs ${editingDevice?.auth_mode === 'key' ? 'text-stone-400' : 'text-stone-600'}`}>
+                          Allow password fallback for manual connection checks
+                        </label>
                       </div>
+                      {editingDevice?.auth_mode === 'key' && (
+                        <p className="text-xs text-stone-500 mt-1">Password credentials are removed after SSH key enrollment; fallback is unavailable in key mode.</p>
+                      )}
                     </div>
 
                     <div className="flex justify-end gap-2 mt-6">
