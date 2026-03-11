@@ -2,22 +2,31 @@
 
 A self-hosted, private tool to sync calendar data (CalDAV + ICS subscriptions) to reMarkable Paper Pro as PDF planners.
 
+This project was built entirely with AI assistance.
+
 ## Features
 
-- **Multi-document Library**: Manage multiple planner configurations.
+- **Multi-document Library**: Manage multiple planner configurations with customizable titles, years, timezones, and remote paths on the device.
 - **Sync when Connected**: Every 5 minutes, the app performs a lightweight device connectivity check and syncs linked documents when a device is reachable.
 - **Calendars Tab**:
-  - Add **CalDAV** sources.
-  - Add **ICS subscriptions** (URL-based calendar feeds) with configurable refresh cadence.
-  - Select both CalDAV and subscription sources per document and merge into a single generated calendar PDF.
+  - Add **CalDAV** sources (Google Calendar, Fastmail, Nextcloud, etc.) with encrypted credential storage.
+  - Add **ICS subscriptions** (URL-based calendar feeds) with configurable refresh cadence (15-1440 minutes).
+  - Discover and select specific calendars from CalDAV accounts.
+  - Merge events from multiple CalDAV accounts and ICS subscriptions into a single PDF, including recurring events and participation status (accepted, declined, tentative).
+- **Device Management**:
+  - Register reMarkable devices via SSH with host key pinning (TOFU).
+  - Support for password or SSH key-based authentication, with optional password fallback.
+  - Automatic connectivity checks and sync triggering.
+- **Automatic Backups**: Scheduled device backups with configurable retention policies (default: 30 days, 20 backups per device, 20GB total limit). Includes manifest generation with file hashing for integrity.
+- **Activity Logging**: Structured JSON logging of operations, syncs, backups, and errors for monitoring and troubleshooting.
 - **Secure**: 
-  - Session-based UI/API authentication (single-user admin password).
+  - Session-based UI/API authentication (single-user admin password) with rate limiting.
   - SSH host key pinning (TOFU on first enrollment) and optional key-based device auth enrollment.
-  - CalDAV credentials encrypted at rest.
-  - ICS subscription URLs are treated as credentials and stored encrypted at rest.
-  - Device credentials/keys encrypted at rest.
+  - AES-256-GCM authenticated encryption for all sensitive data (CalDAV credentials, ICS URLs, device passwords/keys) with per-record keys.
+  - TLS validation enforcement (app refuses startup if TLS is disabled).
+  - Security headers (X-Content-Type-Options, X-Frame-Options, Referrer-Policy).
 - **Dockerized**: Easy deployment with Docker Compose.
-- **Persistence**: All data stored in a single volume.
+- **Persistence**: All data stored in a single volume, including SQLite database, generated PDFs, logs, SSH keys, and backups.
 
 ## Getting Started
 
@@ -89,16 +98,22 @@ A self-hosted, private tool to sync calendar data (CalDAV + ICS subscriptions) t
 
 All application state is stored in the `remarcal_data` Docker volume, mounted at `/data` inside the container.
 
-- **Database**: `/data/app.db` (SQLite)
+- **Database**: `/data/app.db` (SQLite with WAL mode)
 - **Generated PDFs**: `/data/docs/`
+- **Logs**: `/data/logs/` (structured JSON activity logs)
+- **SSH Keys**: `/data/ssh/` (device SSH private keys with restrictive permissions)
+- **Device Backups**: `/data/backups/` (automatic snapshots of reMarkable xochitl directory)
 
-**To Backup**:
+**Automatic Device Backups**:
+The app can perform scheduled backups of your reMarkable device. Configure backup frequency per device (default 24 hours). Backups include a manifest with document inventory and SHA256 file hashes. Retention policies automatically clean up old backups (default: keep 30 days, 20 backups per device, total 20GB limit).
+
+**To Backup Application Data**:
 Create a backup of the Docker volume.
 ```bash
 docker run --rm -v remarcal_data:/data -v $(pwd):/backup ubuntu tar cvf /backup/backup.tar /data
 ```
 
-**To Restore**:
+**To Restore Application Data**:
 ```bash
 docker run --rm -v remarcal_data:/data -v $(pwd):/backup ubuntu tar xvf /backup/backup.tar -C /
 ```
@@ -113,9 +128,10 @@ docker run --rm -v remarcal_data:/data -v $(pwd):/backup ubuntu tar xvf /backup/
 
 ## Troubleshooting
 
-- **Sync Failed**: Check logs (`docker compose logs -f app`).
+- **Sync Failed**: Check logs (`docker compose logs -f app`). Also review activity logs in `/data/logs/info.log` for detailed sync operations.
 - **SSH Connection**: Ensure the container can reach the reMarkable IP. If using USB IP (`10.11.99.1`), the container needs access to the host network or the device needs to be on WiFi.
 - **CalDAV Error**: Verify URL and credentials. Some providers require App Passwords.
+- **Health Check**: Visit `http://localhost:3000/api/health` to verify the app is running (no authentication required).
 
 ## Development
 
