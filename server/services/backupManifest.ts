@@ -23,6 +23,7 @@ export interface BackupManifest {
     documentCount: number;
   };
   documents: BackupManifestDocument[];
+  fileIndex?: Record<string, { size: number; mtimeMs: number; sha256: string }>;
   errors?: string[];
 }
 
@@ -89,10 +90,12 @@ export async function buildBackupManifest(
   appVersion: string,
   xochitlDir: string,
   concurrencyLimit = 4,
+  previousManifest?: BackupManifest | null,
 ): Promise<BackupManifestBuildResult> {
   const allFiles = await walkFiles(xochitlDir);
   const allFilesPosix = allFiles.map((f) => normalizePosix(f));
   const docsMap = new Map<string, string[]>();
+  const statByFile = new Map<string, { size: number; mtimeMs: number }>();
   const errors: string[] = [];
   let totalBytes = 0;
 
@@ -101,6 +104,7 @@ export async function buildBackupManifest(
     try {
       const stat = await fs.promises.stat(absPath);
       totalBytes += stat.size;
+      statByFile.set(relFile, { size: stat.size, mtimeMs: stat.mtimeMs });
     } catch (err: any) {
       errors.push(`stat failed for ${relFile}: ${err?.message || String(err)}`);
     }
@@ -113,11 +117,19 @@ export async function buildBackupManifest(
     docsMap.set(uuid, list);
   }
 
-  const checksumTasks: Array<{ rel: string; abs: string }> = allFilesPosix.map((rel) => ({
-    rel,
-    abs: path.join(xochitlDir, rel),
-  }));
+  const prevIndex = previousManifest?.fileIndex || {};
+  const checksumTasks: Array<{ rel: string; abs: string }> = [];
   const checksums = new Map<string, string>();
+
+  for (const rel of allFilesPosix) {
+    const stat = statByFile.get(rel);
+    const prev = prevIndex[rel];
+    if (stat && prev && prev.size === stat.size && prev.mtimeMs === stat.mtimeMs && typeof prev.sha256 === 'string') {
+      checksums.set(rel, prev.sha256);
+      continue;
+    }
+    checksumTasks.push({ rel, abs: path.join(xochitlDir, rel) });
+  }
 
   let idx = 0;
   const workerCount = Math.max(1, Math.min(concurrencyLimit, 16));
@@ -178,6 +190,18 @@ export async function buildBackupManifest(
 
   documents.sort((a, b) => a.visibleName.localeCompare(b.visibleName));
 
+  const fileIndex: Record<string, { size: number; mtimeMs: number; sha256: string }> = {};
+  for (const rel of allFilesPosix) {
+    const stat = statByFile.get(rel);
+    const sha256 = checksums.get(rel);
+    if (!stat || !sha256) continue;
+    fileIndex[rel] = {
+      size: stat.size,
+      mtimeMs: stat.mtimeMs,
+      sha256,
+    };
+  }
+
   return {
     manifest: {
       backupId,
@@ -190,6 +214,7 @@ export async function buildBackupManifest(
         documentCount: documents.length,
       },
       documents,
+      fileIndex,
       ...(errors.length > 0 ? { errors } : {}),
     },
     hadErrors: errors.length > 0,

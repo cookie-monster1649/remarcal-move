@@ -8,6 +8,7 @@ interface BackupRow {
   status: string;
   started_at: string;
   backup_path: string | null;
+  byte_count?: number | null;
 }
 
 function parsePositiveInt(value: string | undefined, fallback: number): number {
@@ -57,7 +58,7 @@ export async function cleanupBackupsForDevice(deviceId: string): Promise<void> {
   const maxTotalBytes = maxTotalSizeGb * 1024 * 1024 * 1024;
 
   const rows = db.prepare(`
-    SELECT id, device_id, status, started_at, backup_path
+    SELECT id, device_id, status, started_at, backup_path, byte_count
     FROM device_backups
     WHERE device_id = ?
     ORDER BY datetime(started_at) DESC
@@ -79,7 +80,7 @@ export async function cleanupBackupsForDevice(deviceId: string): Promise<void> {
   }
 
   const afterAge = db.prepare(`
-    SELECT id, device_id, status, started_at, backup_path
+    SELECT id, device_id, status, started_at, backup_path, byte_count
     FROM device_backups
     WHERE device_id = ? AND status != 'running'
     ORDER BY datetime(started_at) DESC
@@ -95,7 +96,7 @@ export async function cleanupBackupsForDevice(deviceId: string): Promise<void> {
   }
 
   const sizeRows = db.prepare(`
-    SELECT id, device_id, status, started_at, backup_path
+    SELECT id, device_id, status, started_at, backup_path, byte_count
     FROM device_backups
     WHERE device_id = ? AND status != 'running'
     ORDER BY datetime(started_at) DESC
@@ -106,7 +107,10 @@ export async function cleanupBackupsForDevice(deviceId: string): Promise<void> {
   let totalBytes = 0;
   const sizeMap = new Map<string, number>();
   for (const row of oldestToNewest) {
-    const size = row.backup_path ? await directorySizeBytes(row.backup_path) : 0;
+    const persistedSize = Number(row.byte_count || 0);
+    const size = persistedSize > 0
+      ? persistedSize
+      : (row.backup_path ? await directorySizeBytes(row.backup_path) : 0);
     sizeMap.set(row.id, size);
     totalBytes += size;
   }

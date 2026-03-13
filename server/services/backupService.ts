@@ -1,7 +1,7 @@
 import db from '../db.js';
 import { decrypt } from './encryptionService.js';
 import { SSHService } from './sshService.js';
-import { buildBackupManifest } from './backupManifest.js';
+import { buildBackupManifest, type BackupManifest } from './backupManifest.js';
 import { cleanupBackupsForDevice } from './backupRetention.js';
 import { deviceOperationService } from './deviceOperationService.js';
 import { infoLogService } from './infoLogService.js';
@@ -50,6 +50,12 @@ function getAppVersion(): string {
 
 function getDataDir(): string {
   return process.env.DATA_DIR || './data';
+}
+
+function parsePositiveInt(value: string | undefined, fallback: number): number {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return fallback;
+  return Math.floor(n);
 }
 
 function cloneDirectoryWithHardlinks(sourceDir: string, targetDir: string): void {
@@ -102,6 +108,37 @@ function buildDeviceSshConfig(device: any) {
 }
 
 export class BackupService {
+  recoverStaleRunningBackups(): number {
+    const staleMinutes = parsePositiveInt(process.env.BACKUP_RUNNING_STALE_MINUTES, 90);
+    const cutoffIso = new Date(Date.now() - staleMinutes * 60 * 1000).toISOString();
+    const rows = db.prepare(`
+      SELECT id, device_id, started_at
+      FROM device_backups
+      WHERE status = 'running' AND datetime(started_at) <= datetime(?)
+    `).all(cutoffIso) as Array<{ id: string; device_id: string; started_at: string }>;
+
+    if (rows.length === 0) return 0;
+
+    const completedAt = new Date().toISOString();
+    const update = db.prepare(`
+      UPDATE device_backups
+      SET status = 'error', completed_at = ?, error = ?
+      WHERE id = ?
+    `);
+
+    for (const row of rows) {
+      update.run(completedAt, `Marked stale after ${staleMinutes}m without completion`, row.id);
+    }
+
+    infoLogService.write('backup.recovered_stale_running', {
+      count: rows.length,
+      staleMinutes,
+      backupIds: rows.map((r) => r.id),
+    }, 'warn');
+
+    return rows.length;
+  }
+
   private scheduleQueuedBackupAttempt(deviceId: string): void {
     if (queuedBackupTimers.has(deviceId)) return;
     const timer = setTimeout(async () => {
@@ -205,6 +242,8 @@ export class BackupService {
     const xochitlPath = path.join(root, 'xochitl');
     const manifestPath = path.join(root, 'manifest.json');
     const appVersion = getAppVersion();
+    const skipPreflight = process.env.BACKUP_SKIP_PREFLIGHT !== 'false';
+    const phaseTimers: Record<string, number> = {};
     let lastProgressTs = Date.now();
     let lastTransferred = 0;
 
@@ -230,14 +269,46 @@ export class BackupService {
       fs.mkdirSync(root, { recursive: true });
 
       const ssh = new SSHService(buildDeviceSshConfig(device));
-      setProgress({ phase: 'preflight', message: 'Assessing remote data' });
-      const preflight = await ssh.preflightXochitlDirectory(XOCHITL_REMOTE_PATH);
+      const previousManifest = this.loadPreviousManifest(device.id) || undefined;
+      const estimatedTotals = {
+        totalBytes: previousManifest?.stats?.totalBytes || 0,
+        totalFiles: previousManifest?.stats?.totalFiles || 0,
+      };
+
+      let preflight = {
+        totalBytes: estimatedTotals.totalBytes,
+        totalFiles: estimatedTotals.totalFiles,
+      };
+
+      if (skipPreflight && previousManifest) {
+        setProgress({
+          phase: 'preflight',
+          totalBytes: estimatedTotals.totalBytes,
+          totalFiles: estimatedTotals.totalFiles,
+          transferredBytes: 0,
+          percent: estimatedTotals.totalBytes > 0 ? 0 : undefined,
+          message: 'Skipping deep preflight for incremental backup',
+        });
+        infoLogService.write('backup.preflight_skipped', {
+          backupId,
+          deviceId: device.id,
+          reason: 'incremental',
+          estimatedTotalBytes: estimatedTotals.totalBytes,
+          estimatedTotalFiles: estimatedTotals.totalFiles,
+        });
+      } else {
+        setProgress({ phase: 'preflight', message: 'Assessing remote data' });
+        phaseTimers.preflightStart = Date.now();
+        preflight = await ssh.preflightXochitlDirectory(XOCHITL_REMOTE_PATH);
+        phaseTimers.preflightMs = Date.now() - phaseTimers.preflightStart;
+      }
+
       setProgress({
         phase: 'preflight',
         totalBytes: preflight.totalBytes,
         totalFiles: preflight.totalFiles,
         transferredBytes: 0,
-        percent: preflight.totalBytes > 0 ? 0 : 100,
+        percent: preflight.totalBytes > 0 ? 0 : undefined,
       });
       infoLogService.write('backup.preflight', {
         backupId,
@@ -246,8 +317,9 @@ export class BackupService {
         totalBytes: preflight.totalBytes,
       });
 
+      phaseTimers.transferStart = Date.now();
       const snapshot = await ssh.snapshotXochitlDirectory(XOCHITL_REMOTE_PATH, mirrorXochitlPath, {
-        expectedTotalBytes: preflight.totalBytes,
+        expectedTotalBytes: preflight.totalBytes > 0 ? preflight.totalBytes : undefined,
         isCancelled: () => cancelRequested.has(backupId),
         onProgress: (p) => {
           const now = Date.now();
@@ -263,7 +335,7 @@ export class BackupService {
           setProgress({
             phase: 'transfer',
             transferredBytes: p.transferredBytes,
-            totalBytes: preflight.totalBytes,
+            totalBytes: preflight.totalBytes > 0 ? preflight.totalBytes : 0,
             totalFiles: preflight.totalFiles,
             speedBytesPerSec: speed,
             percent,
@@ -271,16 +343,20 @@ export class BackupService {
           });
         },
       });
+      phaseTimers.transferMs = Date.now() - phaseTimers.transferStart;
 
       if (cancelRequested.has(backupId)) {
         throw new Error('Backup cancelled');
       }
 
       setProgress({ phase: 'finalize', message: 'Creating snapshot from mirror' });
+      phaseTimers.finalizeCloneStart = Date.now();
       cloneDirectoryWithHardlinks(mirrorXochitlPath, xochitlPath);
+      phaseTimers.finalizeCloneMs = Date.now() - phaseTimers.finalizeCloneStart;
 
       setProgress({ phase: 'manifest', message: 'Generating manifest' });
 
+      phaseTimers.manifestStart = Date.now();
       const { manifest, hadErrors } = await buildBackupManifest(
         backupId,
         device.id,
@@ -288,7 +364,9 @@ export class BackupService {
         appVersion,
         xochitlPath,
         4,
+        previousManifest,
       );
+      phaseTimers.manifestMs = Date.now() - phaseTimers.manifestStart;
 
       fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2), 'utf8');
 
@@ -328,7 +406,23 @@ export class BackupService {
         totalBytes: manifest.stats.totalBytes,
         totalFiles: manifest.stats.totalFiles,
       });
+      infoLogService.write('backup.phase_timing', {
+        backupId,
+        deviceId: device.id,
+        preflightMs: phaseTimers.preflightMs,
+        transferMs: phaseTimers.transferMs,
+        finalizeCloneMs: phaseTimers.finalizeCloneMs,
+        manifestMs: phaseTimers.manifestMs,
+      });
+
+      phaseTimers.retentionStart = Date.now();
       await cleanupBackupsForDevice(device.id);
+      phaseTimers.retentionMs = Date.now() - phaseTimers.retentionStart;
+      infoLogService.write('backup.retention_timing', {
+        backupId,
+        deviceId: device.id,
+        retentionMs: phaseTimers.retentionMs,
+      });
     } catch (err: any) {
       const cancelled = cancelRequested.has(backupId) || String(err?.message || '').toLowerCase().includes('cancel');
       db.prepare(`
@@ -349,6 +443,25 @@ export class BackupService {
     }
   }
 
+  private loadPreviousManifest(deviceId: string): BackupManifest | null {
+    const row = db.prepare(`
+      SELECT backup_path
+      FROM device_backups
+      WHERE device_id = ? AND status IN ('success', 'partial') AND backup_path IS NOT NULL
+      ORDER BY datetime(completed_at) DESC
+      LIMIT 1
+    `).get(deviceId) as { backup_path?: string | null } | undefined;
+
+    if (!row?.backup_path) return null;
+    const manifestPath = path.join(row.backup_path, 'manifest.json');
+    try {
+      const raw = fs.readFileSync(manifestPath, 'utf8');
+      return JSON.parse(raw) as BackupManifest;
+    } catch {
+      return null;
+    }
+  }
+
   private isBackupDue(device: any): boolean {
     const last = db.prepare(`
       SELECT completed_at
@@ -365,6 +478,7 @@ export class BackupService {
   }
 
   async runDueBackups(connectedDeviceIds?: Set<string>): Promise<void> {
+    this.recoverStaleRunningBackups();
     const devices = db.prepare('SELECT * FROM devices WHERE backup_enabled = 1').all() as any[];
 
     for (const device of devices) {
