@@ -5,7 +5,7 @@ import { sshKeyManager } from './sshKeyManager.js';
 import { SyncService } from './syncService.js';
 import { backupService } from './backupService.js';
 
-const POLL_INTERVAL_MS = 5 * 60 * 1000;
+const POLL_INTERVAL_MS = 2 * 60 * 1000;
 
 function buildDeviceSshConfig(device: any) {
   const fsPrivateKey = sshKeyManager.loadDevicePrivateKey(device.id);
@@ -41,7 +41,7 @@ export class ConnectionSyncService {
     this.timer = setInterval(() => {
       void this.runCycle();
     }, POLL_INTERVAL_MS);
-    console.log('Connection sync service started (poll every 5 minutes)');
+    console.log('Connection sync service started (poll every 2 minutes)');
   }
 
   stop() {

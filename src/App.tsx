@@ -1373,7 +1373,7 @@ export default function App() {
                         />
                         <label htmlFor="sync_when_connected" className="text-sm font-medium">Sync when connected</label>
                     </div>
-                    <p className="text-xs text-stone-500">Checks every 5 minutes and syncs linked documents when this device is reachable.</p>
+                    <p className="text-xs text-stone-500">Checks every 2 minutes and syncs linked documents when this device is reachable.</p>
                     </div>
 
                     <div className="p-3 rounded-lg border border-stone-200 bg-stone-50">

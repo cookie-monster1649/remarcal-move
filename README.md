@@ -7,7 +7,7 @@ This project was built entirely with AI assistance.
 ## Features
 
 - **Multi-document Library**: Manage multiple planner configurations with customizable titles, years, timezones, and remote paths on the device.
-- **Sync when Connected**: Every 5 minutes, the app performs a lightweight device connectivity check and syncs linked documents when a device is reachable.
+- **Sync when Connected**: Every 2 minutes, the app performs a lightweight device connectivity check and syncs linked documents when a device is reachable.
 - **Calendars Tab**:
   - Add **CalDAV** sources (Google Calendar, Fastmail, Nextcloud, etc.) with encrypted credential storage.
   - Add **ICS subscriptions** (URL-based calendar feeds) with configurable refresh cadence (15-1440 minutes).
