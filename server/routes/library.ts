@@ -151,9 +151,30 @@ router.post('/:id/sync', async (req, res) => {
   const { id } = req.params;
   try {
     await syncService.syncDocument(id);
-    res.json({ message: 'Sync started' });
+    res.json({ message: 'Sync completed' });
   } catch (err: any) {
-    res.status(500).json({ error: err.message });
+    const message = err?.message || 'Sync failed';
+    if (message.includes('not found')) {
+      return res.status(404).json({ error: message });
+    }
+    if (message.includes('already in progress')) {
+      return res.status(409).json({ error: message });
+    }
+    return res.status(500).json({ error: message });
+  }
+});
+
+// Cancel/Reset Sync
+router.post('/:id/sync/cancel', (req, res) => {
+  const { id } = req.params;
+  try {
+    const cancelled = syncService.cancelSync(id);
+    if (!cancelled) {
+      return res.status(404).json({ error: 'No active or queued sync found for this document' });
+    }
+    return res.json({ message: 'Sync cancel requested; status reset to idle' });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
   }
 });
 

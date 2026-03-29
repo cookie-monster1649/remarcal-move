@@ -13,6 +13,38 @@ import { traceConfig } from '../utils/traceConfig.js';
 
 const calDavService = new CalDavService();
 const pdfService = new PDFService();
+const DEFAULT_SYNC_OPERATION_TIMEOUT_MS = 3 * 60 * 1000;
+const cancelRequested = new Set<string>();
+const activeSyncByDoc = new Set<string>();
+
+function getSyncTimeoutMs(): number {
+  const raw = Number(process.env.SYNC_OPERATION_TIMEOUT_MS || DEFAULT_SYNC_OPERATION_TIMEOUT_MS);
+  if (!Number.isFinite(raw) || raw < 30_000) {
+    return DEFAULT_SYNC_OPERATION_TIMEOUT_MS;
+  }
+  return Math.floor(raw);
+}
+
+async function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(message)), ms);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+function ensureNotCancelled(docId: string) {
+  if (!cancelRequested.has(docId)) return;
+  const err: any = new Error('Sync cancelled by user');
+  err.syncCancelled = true;
+  throw err;
+}
 function traceLog(message: string, payload?: Record<string, unknown>) {
   if (!traceConfig.sync) return;
   if (payload) {
@@ -48,6 +80,36 @@ const queuedSyncByDevice = new Map<string, Set<string>>();
 const queuedSyncTimers = new Map<string, NodeJS.Timeout>();
 
 export class SyncService {
+  cancelSync(docId: string): boolean {
+    cancelRequested.add(docId);
+
+    let removedFromQueue = false;
+    for (const [deviceId, queued] of queuedSyncByDevice.entries()) {
+      if (!queued.delete(docId)) continue;
+      removedFromQueue = true;
+      if (queued.size === 0) {
+        queuedSyncByDevice.delete(deviceId);
+      }
+    }
+
+    const reset = db.prepare(`
+      UPDATE documents
+      SET sync_status = 'idle',
+          last_error = 'Sync cancelled by user',
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = ? AND sync_status IN ('syncing', 'queued', 'checking')
+    `).run(docId);
+
+    infoLogService.write('sync.cancel_requested', {
+      docId,
+      active: activeSyncByDoc.has(docId),
+      queued: removedFromQueue,
+      resetRows: reset.changes,
+    }, 'warn');
+
+    return activeSyncByDoc.has(docId) || removedFromQueue || reset.changes > 0;
+  }
+
   private queueSync(deviceId: string, docId: string): void {
     const existing = queuedSyncByDevice.get(deviceId) || new Set<string>();
     existing.add(docId);
@@ -226,6 +288,8 @@ export class SyncService {
   }
 
   async syncDocument(docId: string) {
+    const timeoutMs = getSyncTimeoutMs();
+
     // 1. Get Document
     const doc = db.prepare('SELECT * FROM documents WHERE id = ?').get(docId) as any;
     if (!doc) throw new Error(`Document ${docId} not found`);
@@ -266,29 +330,52 @@ export class SyncService {
       // Update status to syncing
       db.prepare('UPDATE documents SET sync_status = ?, last_error = NULL WHERE id = ?').run('syncing', docId);
       infoLogService.write('sync.started', { docId, deviceId: device.id, remotePath: doc.remote_path });
+      activeSyncByDoc.add(docId);
 
       try {
-        const { localPath } = await this.generateDocumentPDF(docId);
+        ensureNotCancelled(docId);
+
+        const { localPath } = await withTimeout(
+          this.generateDocumentPDF(docId),
+          timeoutMs,
+          `PDF generation timed out after ${timeoutMs}ms`,
+        );
+        ensureNotCancelled(docId);
 
         const sshConfig = buildDeviceSshConfig(device);
         const deviceSshService = new SSHService(sshConfig);
-        await deviceSshService.uploadPDF(doc.remote_path, localPath, doc.title);
+        await withTimeout(
+          deviceSshService.uploadPDF(doc.remote_path, localPath, doc.title),
+          timeoutMs,
+          `PDF upload timed out after ${timeoutMs}ms`,
+        );
+        ensureNotCancelled(docId);
 
         // 5. Update Status
         const completedAt = new Date().toISOString();
-        db.prepare('UPDATE documents SET sync_status = ?, last_synced_at = ? WHERE id = ?').run('idle', completedAt, docId);
+        db.prepare('UPDATE documents SET sync_status = ?, last_synced_at = ?, last_error = NULL WHERE id = ?').run('idle', completedAt, docId);
         infoLogService.write('sync.completed', { docId, deviceId: device.id, at: completedAt });
       } finally {
         deviceOperationService.release(device.id, 'sync');
+        activeSyncByDoc.delete(docId);
+        cancelRequested.delete(docId);
         this.scheduleQueuedSyncAttempt(device.id);
       }
 
     } catch (error: any) {
       console.error(`Sync failed for doc ${docId}:`, error);
-      db.prepare('UPDATE documents SET sync_status = ?, last_error = ? WHERE id = ?').run('error', error.message, docId);
+      const message = error?.message || 'Unknown sync error';
+      const cancelled = !!error?.syncCancelled || String(message).toLowerCase().includes('cancel');
+      if (cancelled) {
+        db.prepare('UPDATE documents SET sync_status = ?, last_error = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+          .run('idle', 'Sync cancelled by user', docId);
+        infoLogService.write('sync.cancelled', { docId }, 'warn');
+      } else {
+        db.prepare('UPDATE documents SET sync_status = ?, last_error = ? WHERE id = ?').run('error', message, docId);
+      }
       if (error?.syncSkipped) {
         infoLogService.write('sync.skipped', { docId, reason: 'precondition_failed', detail: error.message }, 'warn');
-      } else {
+      } else if (!cancelled) {
         infoLogService.write('sync.failed', { docId, error: error.message }, 'error');
       }
       throw error;

@@ -346,8 +346,8 @@ export function initDb() {
     }
   }
 
-  // Cleanup: Reset stuck syncing status
-  db.prepare("UPDATE documents SET sync_status = 'idle' WHERE sync_status = 'syncing'").run();
+  // Cleanup: Reset transient in-progress statuses left by crashes/restarts.
+  db.prepare("UPDATE documents SET sync_status = 'idle' WHERE sync_status IN ('syncing', 'checking')").run();
   
   console.log('Database initialized at', DB_PATH);
 }

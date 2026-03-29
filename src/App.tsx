@@ -11,7 +11,7 @@ interface Document {
   type: string;
   remote_path: string;
   last_synced_at: string;
-  sync_status: 'idle' | 'syncing' | 'error';
+  sync_status: 'idle' | 'checking' | 'queued' | 'syncing' | 'error';
   last_error: string;
   year: number;
   timezone: string;
@@ -498,7 +498,22 @@ export default function App() {
       await axios.post(`/api/library/${id}/sync`);
       fetchData();
     } catch (err: any) {
-      alert(err.message);
+      alert(err.response?.data?.error || err.message || 'Failed to sync');
+    } finally {
+      setManualSyncStatus(prev => {
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
+    }
+  };
+
+  const cancelDocSync = async (id: string) => {
+    try {
+      await axios.post(`/api/library/${id}/sync/cancel`);
+      await fetchData();
+    } catch (err: any) {
+      alert(err.response?.data?.error || err.message || 'Failed to cancel sync');
     } finally {
       setManualSyncStatus(prev => {
         const next = { ...prev };
@@ -774,12 +789,14 @@ export default function App() {
                 <div className="grid gap-4">
                     {documents.map(doc => {
                         const isSyncing = doc.sync_status === 'syncing' || !!manualSyncStatus[doc.id];
+                        const isQueued = doc.sync_status === 'queued';
                         return (
                         <div key={doc.id} className="rm-card bg-white p-6 rounded-2xl border border-stone-200 shadow-sm flex flex-col md:flex-row justify-between gap-4">
                             <div className="flex-1">
                                 <div className="flex items-center gap-2 mb-1">
                                     <h3 className="font-bold text-lg">{doc.title}</h3>
                                     {isSyncing && <RefreshCw size={14} className="animate-spin text-blue-500" />}
+                                    {isQueued && <Clock size={14} className="text-amber-600" />}
                                     {doc.sync_status === 'error' && <XCircle size={14} className="text-red-500" />}
                                     {!isSyncing && doc.sync_status === 'idle' && doc.last_synced_at && <CheckCircle size={14} className="text-green-500" />}
                                 </div>
@@ -791,6 +808,9 @@ export default function App() {
                                     </span>
                                     {doc.last_synced_at && (
                                         <span>Last synced: {new Date(doc.last_synced_at).toLocaleString()}</span>
+                                    )}
+                                    {isQueued && (
+                                        <span className="text-amber-700">Queued (waiting for backup/device lock)</span>
                                     )}
                                 </div>
                                 {doc.last_error && (
@@ -813,6 +833,15 @@ export default function App() {
                                 >
                                     <RefreshCw size={20} className={isSyncing ? 'animate-spin' : ''} />
                                 </button>
+                                {(isSyncing || isQueued) && (
+                                  <button
+                                      onClick={() => cancelDocSync(doc.id)}
+                                      className="p-2 text-stone-500 hover:text-amber-700 hover:bg-amber-50 rounded-lg"
+                                      title="Cancel Sync"
+                                  >
+                                      <XCircle size={20} />
+                                  </button>
+                                )}
                                 <button 
                                     onClick={() => {
                                         setEditingDoc(doc);
