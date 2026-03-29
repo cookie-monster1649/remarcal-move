@@ -3,15 +3,15 @@ import { cva, type VariantProps } from 'class-variance-authority';
 import { cn } from '../../lib/utils';
 
 const buttonVariants = cva(
-  'inline-flex items-center justify-center whitespace-nowrap rounded-xl text-sm font-medium transition-all disabled:pointer-events-none disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-stone-700',
+  'inline-flex items-center justify-center whitespace-nowrap rounded-xl text-sm font-medium transition-all disabled:pointer-events-none disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-[var(--rm-focus-ring)]',
   {
     variants: {
       variant: {
-        default: 'bg-stone-900 text-stone-50 hover:bg-stone-800 shadow-sm',
-        secondary: 'bg-white text-stone-800 border border-stone-200 hover:bg-stone-50',
-        outline: 'border border-stone-300 bg-transparent hover:bg-stone-100 text-stone-800',
-        ghost: 'text-stone-700 hover:bg-stone-100',
-        destructive: 'bg-red-600 text-white hover:bg-red-500',
+        default: 'border border-transparent bg-[var(--rm-accent)] text-[var(--rm-accent-foreground)] hover:bg-[var(--rm-accent-hover)] shadow-sm',
+        secondary: 'border border-[var(--rm-border-strong)] bg-[var(--rm-surface-elev)] text-[var(--rm-ink)] hover:bg-[var(--rm-surface-soft)]',
+        outline: 'border border-[var(--rm-border-strong)] bg-transparent text-[var(--rm-ink)] hover:bg-[var(--rm-surface-soft)]',
+        ghost: 'text-[var(--rm-muted)] hover:bg-[var(--rm-surface-soft)] hover:text-[var(--rm-ink)]',
+        destructive: 'border border-transparent bg-[var(--rm-danger)] text-white hover:bg-[var(--rm-danger-hover)]',
       },
       size: {
         default: 'h-10 px-4 py-2',

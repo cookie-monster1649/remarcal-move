@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Calendar, Settings, Plus, Trash2, RefreshCw, CheckCircle, XCircle, Clock, Tablet, Wifi, WifiOff, Download, LogOut, Shield } from 'lucide-react';
+import { Calendar, Settings, Plus, Trash2, RefreshCw, CheckCircle, XCircle, Clock, Tablet, Wifi, WifiOff, Download, LogOut, Shield, Moon, Sun, Monitor } from 'lucide-react';
 import axios from 'axios';
 import { Badge } from './components/ui/badge';
 import { Button } from './components/ui/button';
@@ -123,6 +123,16 @@ interface UiToast {
   message: string;
 }
 
+type ThemeMode = 'system' | 'light' | 'dark';
+
+const THEME_STORAGE_KEY = 'remarcal_move.theme_mode';
+
+const getInitialThemeMode = (): ThemeMode => {
+  if (typeof window === 'undefined') return 'system';
+  const stored = window.localStorage.getItem(THEME_STORAGE_KEY);
+  return stored === 'light' || stored === 'dark' || stored === 'system' ? stored : 'system';
+};
+
 export default function App() {
   const DATA_POLL_MS = 120000;
   const DEVICE_CHECK_MS = 120000;
@@ -164,6 +174,11 @@ export default function App() {
     onConfirm: null,
   });
   const [confirmSubmitting, setConfirmSubmitting] = useState(false);
+  const [themeMode, setThemeMode] = useState<ThemeMode>(getInitialThemeMode);
+  const [systemPrefersDark, setSystemPrefersDark] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    return window.matchMedia('(prefers-color-scheme: dark)').matches;
+  });
 
   // Forms state
   const [showDocForm, setShowDocForm] = useState(false);
@@ -240,6 +255,8 @@ export default function App() {
     setConfirmState({ open: false, title: '', description: '', onConfirm: null });
   };
 
+  const resolvedTheme: 'light' | 'dark' = themeMode === 'system' ? (systemPrefersDark ? 'dark' : 'light') : themeMode;
+
   useEffect(() => {
     if (!isAnyFormModalOpen && !confirmState.open) return;
     const onKeyDown = (event: KeyboardEvent) => {
@@ -256,6 +273,30 @@ export default function App() {
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [isAnyFormModalOpen, confirmState.open, confirmSubmitting, showDocForm, showDeviceForm, showAccountForm, showSubscriptionForm]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+    const onChange = (event: MediaQueryListEvent) => {
+      setSystemPrefersDark(event.matches);
+    };
+
+    setSystemPrefersDark(mediaQuery.matches);
+    if (mediaQuery.addEventListener) {
+      mediaQuery.addEventListener('change', onChange);
+      return () => mediaQuery.removeEventListener('change', onChange);
+    }
+    mediaQuery.addListener(onChange);
+    return () => mediaQuery.removeListener(onChange);
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem(THEME_STORAGE_KEY, themeMode);
+    const root = document.documentElement;
+    root.classList.remove('theme-light', 'theme-dark');
+    root.classList.add(resolvedTheme === 'dark' ? 'theme-dark' : 'theme-light');
+  }, [themeMode, resolvedTheme]);
 
   useEffect(() => {
     if (!isAnyFormModalOpen) return;
@@ -803,7 +844,7 @@ export default function App() {
   };
 
   return (
-    <div className="remarkable-ui min-h-screen bg-stone-100 text-stone-900 font-sans">
+    <div className="remarkable-ui min-h-screen text-stone-900 font-sans transition-colors duration-300">
       {!authChecked ? (
         <div className="min-h-screen flex items-center justify-center text-stone-600">Checking session…</div>
       ) : !authenticated ? (
@@ -843,6 +884,38 @@ export default function App() {
               </div>
             </div>
             <nav className="flex flex-wrap items-center gap-2">
+              <div className="mr-1 inline-flex items-center rounded-xl border border-stone-200 bg-stone-100/70 p-1">
+                <Button
+                  onClick={() => setThemeMode('light')}
+                  variant={themeMode === 'light' ? 'default' : 'ghost'}
+                  size="sm"
+                  className="h-7 w-7 p-0"
+                  title="Light mode"
+                  aria-label="Switch to light mode"
+                >
+                  <Sun size={13} />
+                </Button>
+                <Button
+                  onClick={() => setThemeMode('system')}
+                  variant={themeMode === 'system' ? 'default' : 'ghost'}
+                  size="sm"
+                  className="h-7 w-7 p-0"
+                  title={`System mode (${resolvedTheme})`}
+                  aria-label="Use system theme"
+                >
+                  <Monitor size={13} />
+                </Button>
+                <Button
+                  onClick={() => setThemeMode('dark')}
+                  variant={themeMode === 'dark' ? 'default' : 'ghost'}
+                  size="sm"
+                  className="h-7 w-7 p-0"
+                  title="Dark mode"
+                  aria-label="Switch to dark mode"
+                >
+                  <Moon size={13} />
+                </Button>
+              </div>
               <Button onClick={() => setActiveTab('library')} variant={activeTab === 'library' ? 'default' : 'secondary'} size="sm">Library</Button>
               <Button onClick={() => setActiveTab('devices')} variant={activeTab === 'devices' ? 'default' : 'secondary'} size="sm">Devices</Button>
               <Button onClick={() => setActiveTab('settings')} variant={activeTab === 'settings' ? 'default' : 'secondary'} size="sm">Calendars</Button>

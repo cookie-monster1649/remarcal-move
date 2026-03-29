@@ -1,24 +1,83 @@
 @import "tailwindcss";
 
-/* reMarkable-inspired premium editorial styling */
+:root,
+.theme-light {
+  --rm-bg: #efe8dd;
+  --rm-bg-secondary: #e3d7c7;
+  --rm-surface: #f9f4ec;
+  --rm-surface-elev: #fffdf9;
+  --rm-surface-soft: #efe5d8;
+  --rm-ink: #191611;
+  --rm-muted: #6f6557;
+  --rm-border: #d8cdbe;
+  --rm-border-strong: #c8bcaa;
+  --rm-focus-ring: #3a3329;
+  --rm-accent: #1d1f24;
+  --rm-accent-hover: #2a2d35;
+  --rm-accent-foreground: #f8f8f8;
+  --rm-success-bg: #e7f6ec;
+  --rm-success-border: #a7dbb7;
+  --rm-success-fg: #21633a;
+  --rm-warning-bg: #fff2df;
+  --rm-warning-border: #edc58d;
+  --rm-warning-fg: #8a5319;
+  --rm-danger-bg: #ffe8e9;
+  --rm-danger-border: #efb2b6;
+  --rm-danger-fg: #8f252e;
+  --rm-danger: #c43e49;
+  --rm-danger-hover: #af3540;
+  --rm-info-bg: #e9f3ff;
+  --rm-info-border: #aac7eb;
+  --rm-info-fg: #244f84;
+  --rm-progress-track: #e2d9cb;
+  --rm-progress-fill: #3b82f6;
+}
+
+.theme-dark {
+  --rm-bg: #121419;
+  --rm-bg-secondary: #1b1f28;
+  --rm-surface: #171b22;
+  --rm-surface-elev: #1d232d;
+  --rm-surface-soft: #27303b;
+  --rm-ink: #e8edf4;
+  --rm-muted: #9fa8b8;
+  --rm-border: #323a45;
+  --rm-border-strong: #485364;
+  --rm-focus-ring: #9fb3d4;
+  --rm-accent: #e8edf4;
+  --rm-accent-hover: #d3dae4;
+  --rm-accent-foreground: #12161d;
+  --rm-success-bg: #143025;
+  --rm-success-border: #2f5f4b;
+  --rm-success-fg: #8fd2ab;
+  --rm-warning-bg: #3a2c16;
+  --rm-warning-border: #6a4f28;
+  --rm-warning-fg: #ffd394;
+  --rm-danger-bg: #3c1f28;
+  --rm-danger-border: #6f3444;
+  --rm-danger-fg: #ffb0be;
+  --rm-danger: #ef7385;
+  --rm-danger-hover: #f48c9b;
+  --rm-info-bg: #1a2a40;
+  --rm-info-border: #2f4f74;
+  --rm-info-fg: #aaccf5;
+  --rm-progress-track: #2b3340;
+  --rm-progress-fill: #7cb0ff;
+}
+
+/* Core shell */
 .remarkable-ui {
-  --rm-bg: #ece7de;
-  --rm-panel: #f6f2ea;
-  --rm-panel-elev: #fbf9f4;
-  --rm-border: #cfcac2;
-  --rm-ink: #191714;
-  --rm-muted: #6b655f;
   background:
-    radial-gradient(circle at 10% 0%, rgba(255, 255, 255, 0.45), transparent 28%),
-    radial-gradient(circle at 100% 100%, rgba(214, 204, 187, 0.35), transparent 30%),
+    radial-gradient(circle at 10% 0%, color-mix(in srgb, var(--rm-bg-secondary) 54%, transparent), transparent 40%),
+    radial-gradient(circle at 88% 94%, color-mix(in srgb, var(--rm-bg-secondary) 44%, transparent), transparent 36%),
     var(--rm-bg);
   color: var(--rm-ink);
-  font-family: "Avenir Next", "Segoe UI Variable", "Helvetica Neue", "Trebuchet MS", sans-serif;
-  letter-spacing: 0.005em;
+  font-family: "Avenir Next", "Trebuchet MS", "Segoe UI Variable", sans-serif;
+  letter-spacing: 0.004em;
 }
 
 .remarkable-ui .remarkable-header {
-  background: color-mix(in srgb, var(--rm-panel) 70%, #fff 30%);
+  background: color-mix(in srgb, var(--rm-surface) 84%, transparent);
   border-bottom-color: var(--rm-border);
   box-shadow: none;
 }
@@ -26,96 +85,133 @@
 .remarkable-ui .rm-brand-mark {
   background: transparent;
   color: var(--rm-ink);
-  border: 1px solid color-mix(in srgb, var(--rm-ink) 88%, white 12%);
-  border-radius: 0.5rem;
+  border: 1px solid color-mix(in srgb, var(--rm-ink) 85%, transparent);
+  border-radius: 0.55rem;
 }
 
 .remarkable-ui .rm-brand-title {
   color: var(--rm-ink);
-  font-family: "Canela", "Iowan Old Style", "Palatino Linotype", "Book Antiqua", serif;
+  font-family: "Canela", "Iowan Old Style", "Book Antiqua", serif;
   font-weight: 500;
   letter-spacing: 0.02em;
 }
 
 .remarkable-ui .rm-card {
-  background: var(--rm-panel-elev);
+  background: var(--rm-surface-elev);
   border-color: var(--rm-border);
   border-radius: 0.9rem;
-  box-shadow: none;
 }
 
 .remarkable-ui .rm-card:hover {
-  background: color-mix(in srgb, var(--rm-panel-elev) 85%, white 15%);
+  background: color-mix(in srgb, var(--rm-surface-elev) 84%, var(--rm-surface-soft) 16%);
 }
 
-.remarkable-ui .rm-button-primary {
-  background: transparent;
-  color: var(--rm-ink);
-  border: 1px solid transparent;
-  box-shadow: none;
+/* Focus */
+.remarkable-ui button:focus-visible,
+.remarkable-ui input:focus-visible,
+.remarkable-ui select:focus-visible,
+.remarkable-ui textarea:focus-visible {
+  outline: 2px solid var(--rm-focus-ring);
+  outline-offset: 2px;
 }
 
-.remarkable-ui .rm-button-primary:hover {
-  background: color-mix(in srgb, var(--rm-panel) 85%, white 15%);
-  color: var(--rm-ink);
+/* Utility remap for legacy Tailwind classes in App.tsx */
+.remarkable-ui .bg-white {
+  background-color: var(--rm-surface-elev) !important;
 }
 
-.remarkable-ui .rm-button-secondary {
-  background: transparent;
-  border: 1px solid transparent;
-  color: var(--rm-muted);
-  box-shadow: none;
+.remarkable-ui .bg-stone-50 {
+  background-color: var(--rm-surface-soft) !important;
 }
 
-.remarkable-ui .rm-button-secondary:hover {
-  background: color-mix(in srgb, var(--rm-panel) 85%, white 15%);
-  color: var(--rm-ink);
-}
-
-.remarkable-ui .rm-nav-button {
-  border: 1px solid transparent;
-  background: transparent;
-  color: var(--rm-muted);
-  border-radius: 0.5rem;
-}
-
-.remarkable-ui .rm-nav-button.rm-nav-active {
-  background: color-mix(in srgb, var(--rm-panel) 84%, #fff 16%);
-  color: var(--rm-ink);
-  border-color: var(--rm-border);
-}
-
-.remarkable-ui .rm-nav-button:not(.rm-nav-active) {
-  background: transparent;
-  color: var(--rm-muted);
-  border-color: transparent;
-}
-
-.remarkable-ui .rm-nav-button:not(.rm-nav-active):hover {
-  background: color-mix(in srgb, var(--rm-panel) 84%, #fff 16%);
-  color: var(--rm-ink);
-}
-
-.remarkable-ui .text-stone-500,
-.remarkable-ui .text-stone-400,
-.remarkable-ui .text-stone-600 {
-  color: var(--rm-muted) !important;
+.remarkable-ui .bg-stone-100 {
+  background-color: color-mix(in srgb, var(--rm-surface-soft) 82%, var(--rm-surface-elev) 18%) !important;
 }
 
 .remarkable-ui .text-stone-900,
+.remarkable-ui .text-stone-800,
 .remarkable-ui .text-stone-700 {
   color: var(--rm-ink) !important;
 }
 
+.remarkable-ui .text-stone-600,
+.remarkable-ui .text-stone-500,
+.remarkable-ui .text-stone-400 {
+  color: var(--rm-muted) !important;
+}
+
+.remarkable-ui .border-stone-300,
 .remarkable-ui .border-stone-200,
 .remarkable-ui .border-stone-100 {
   border-color: var(--rm-border) !important;
 }
 
-.remarkable-ui button:focus-visible,
-.remarkable-ui input:focus-visible,
-.remarkable-ui select:focus-visible,
-.remarkable-ui textarea:focus-visible {
-  outline: 2px solid #2f2b27;
-  outline-offset: 2px;
+.remarkable-ui .hover\:bg-stone-100:hover,
+.remarkable-ui .hover\:bg-stone-200:hover {
+  background-color: var(--rm-surface-soft) !important;
+}
+
+.remarkable-ui .hover\:bg-stone-800:hover {
+  background-color: var(--rm-accent-hover) !important;
+}
+
+.remarkable-ui .bg-red-50 {
+  background-color: var(--rm-danger-bg) !important;
+}
+
+.remarkable-ui .border-red-100,
+.remarkable-ui .border-red-200 {
+  border-color: var(--rm-danger-border) !important;
+}
+
+.remarkable-ui .text-red-700,
+.remarkable-ui .text-red-600,
+.remarkable-ui .hover\:text-red-600:hover {
+  color: var(--rm-danger-fg) !important;
+}
+
+.remarkable-ui .bg-amber-50 {
+  background-color: var(--rm-warning-bg) !important;
+}
+
+.remarkable-ui .border-amber-200 {
+  border-color: var(--rm-warning-border) !important;
+}
+
+.remarkable-ui .text-amber-700,
+.remarkable-ui .text-amber-600,
+.remarkable-ui .hover\:text-amber-700:hover {
+  color: var(--rm-warning-fg) !important;
+}
+
+.remarkable-ui .bg-green-50 {
+  background-color: var(--rm-success-bg) !important;
+}
+
+.remarkable-ui .border-green-200 {
+  border-color: var(--rm-success-border) !important;
+}
+
+.remarkable-ui .text-green-700,
+.remarkable-ui .text-green-600,
+.remarkable-ui .text-green-500 {
+  color: var(--rm-success-fg) !important;
+}
+
+.remarkable-ui .bg-blue-50 {
+  background-color: var(--rm-info-bg) !important;
+}
+
+.remarkable-ui .border-blue-200 {
+  border-color: var(--rm-info-border) !important;
+}
+
+.remarkable-ui .text-blue-700,
+.remarkable-ui .text-blue-600,
+.remarkable-ui .text-blue-500 {
+  color: var(--rm-info-fg) !important;
+}
+
+.remarkable-ui ::selection {
+  background: color-mix(in srgb, var(--rm-accent) 26%, transparent);
 }
