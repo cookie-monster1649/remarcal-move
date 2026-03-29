@@ -82,6 +82,27 @@ interface BackupProgress {
   message?: string;
 }
 
+interface BackupDiagnosticsDevice {
+  device_id: string;
+  device_name: string;
+  auth_mode: 'password' | 'key';
+  allow_password_fallback: boolean;
+  has_fs_private_key: boolean;
+  has_db_private_key: boolean;
+  has_password: boolean;
+  effective_auth: 'key' | 'password' | 'invalid';
+  rsync_binary_available: boolean;
+  will_use_rsync: boolean;
+  expected_transfer_method: 'rsync' | 'sftp';
+  reason: string;
+}
+
+interface BackupDiagnosticsResponse {
+  generated_at: string;
+  rsync_binary_available: boolean;
+  devices: BackupDiagnosticsDevice[];
+}
+
 interface InfoLogEvent {
   ts: string;
   level: 'info' | 'warn' | 'error';
@@ -97,6 +118,11 @@ export default function App() {
   const [devices, setDevices] = useState<Device[]>([]);
   const [backups, setBackups] = useState<DeviceBackup[]>([]);
   const [backupProgress, setBackupProgress] = useState<Record<string, BackupProgress>>({});
+  const [backupDiagnosticsByDevice, setBackupDiagnosticsByDevice] = useState<Record<string, BackupDiagnosticsDevice>>({});
+  const [backupDiagnosticsRsyncAvailable, setBackupDiagnosticsRsyncAvailable] = useState<boolean | null>(null);
+  const [backupDiagnosticsAt, setBackupDiagnosticsAt] = useState<string | null>(null);
+  const [backupDiagnosticsLoading, setBackupDiagnosticsLoading] = useState(false);
+  const [backupDiagnosticsError, setBackupDiagnosticsError] = useState<string | null>(null);
   const [infoLogs, setInfoLogs] = useState<InfoLogEvent[]>([]);
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -581,6 +607,30 @@ export default function App() {
     }
   };
 
+  const loadBackupDiagnostics = async () => {
+    setBackupDiagnosticsLoading(true);
+    try {
+      const res = await axios.get('/api/backups/diagnostics');
+      const payload = (res.data || {}) as BackupDiagnosticsResponse;
+      const rows = Array.isArray(payload.devices) ? payload.devices : [];
+      const next: Record<string, BackupDiagnosticsDevice> = {};
+      for (const row of rows) {
+        if (!row?.device_id) continue;
+        next[row.device_id] = row;
+      }
+      setBackupDiagnosticsByDevice(next);
+      setBackupDiagnosticsRsyncAvailable(
+        typeof payload.rsync_binary_available === 'boolean' ? payload.rsync_binary_available : null,
+      );
+      setBackupDiagnosticsAt(payload.generated_at || new Date().toISOString());
+      setBackupDiagnosticsError(null);
+    } catch (err: any) {
+      setBackupDiagnosticsError(err.response?.data?.error || err.message || 'Failed to load diagnostics');
+    } finally {
+      setBackupDiagnosticsLoading(false);
+    }
+  };
+
   const getLatestBackupForDevice = (deviceId: string) => {
     return backups
       .filter((b) => b.device_id === deviceId)
@@ -624,6 +674,17 @@ export default function App() {
     }, 2000);
     return () => clearInterval(interval);
   }, [authenticated, activeTab, backups]);
+
+  useEffect(() => {
+    if (!authenticated) return;
+    if (activeTab !== 'devices') return;
+
+    void loadBackupDiagnostics();
+    const interval = setInterval(() => {
+      void loadBackupDiagnostics();
+    }, 15000);
+    return () => clearInterval(interval);
+  }, [authenticated, activeTab, devices.length]);
 
   const downloadDocPdf = async (doc: Document) => {
     try {
@@ -927,6 +988,7 @@ export default function App() {
                     const backupRunning = !!manualBackupStatus[dev.id] || latestBackup?.status === 'running';
                     const backupCancelling = !!(latestBackup && cancellingBackupStatus[latestBackup.id]);
                     const latestProgress = latestBackup ? backupProgress[latestBackup.id] : null;
+                    const diagnostics = backupDiagnosticsByDevice[dev.id];
                     const keyEnrolling = !!enrollKeyStatus[dev.id];
                     const docsForDevice = documents.filter((d) => d.device_id === dev.id);
                     const syncRunning = docsForDevice.some((d) => d.sync_status === 'syncing' || !!manualSyncStatus[d.id]);
@@ -942,6 +1004,22 @@ export default function App() {
                                 {deviceStatus[dev.id] === 'checking' && <RefreshCw size={14} className="animate-spin text-stone-400" title="Checking..." />}
                             </div>
                             <p className="text-sm text-stone-500 font-mono mt-1">{dev.username}@{dev.host}:{dev.port}</p>
+                            {diagnostics && (
+                              <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+                                <span className={`px-2 py-0.5 rounded-full border ${diagnostics.will_use_rsync ? 'bg-green-50 border-green-200 text-green-700' : 'bg-amber-50 border-amber-200 text-amber-700'}`}>
+                                  Transfer: {diagnostics.expected_transfer_method.toUpperCase()}
+                                </span>
+                                <span className={`px-2 py-0.5 rounded-full border ${diagnostics.effective_auth === 'key' ? 'bg-green-50 border-green-200 text-green-700' : diagnostics.effective_auth === 'password' ? 'bg-amber-50 border-amber-200 text-amber-700' : 'bg-red-50 border-red-200 text-red-700'}`}>
+                                  Effective Auth: {diagnostics.effective_auth}
+                                </span>
+                                <span className="px-2 py-0.5 rounded-full border bg-stone-50 border-stone-200 text-stone-700">
+                                  Key Source: {diagnostics.has_fs_private_key ? 'filesystem' : diagnostics.has_db_private_key ? 'database' : 'none'}
+                                </span>
+                              </div>
+                            )}
+                            {diagnostics && (
+                              <p className="text-[11px] text-stone-500 mt-1">{diagnostics.reason}</p>
+                            )}
                             <div className="mt-2 flex items-center gap-2 text-xs">
                               <span className={`px-2 py-0.5 rounded-full border ${dev.auth_mode === 'key' ? 'bg-green-50 border-green-200 text-green-700' : 'bg-amber-50 border-amber-200 text-amber-700'}`}>
                                 Auth: {dev.auth_mode === 'key' ? 'SSH key' : 'Password'}
@@ -1026,6 +1104,31 @@ export default function App() {
                         </div>
                     </div>
                 )})}
+            </div>
+
+            <div className="rm-card bg-white p-4 rounded-2xl border border-stone-200 shadow-sm">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <h3 className="font-semibold">Backup Diagnostics</h3>
+                  <p className="text-xs text-stone-500 mt-1">
+                    rsync binary: {backupDiagnosticsRsyncAvailable === null ? 'unknown' : backupDiagnosticsRsyncAvailable ? 'available' : 'not available'}
+                    {backupDiagnosticsAt ? ` • updated ${new Date(backupDiagnosticsAt).toLocaleTimeString()}` : ''}
+                  </p>
+                </div>
+                <button
+                  onClick={() => void loadBackupDiagnostics()}
+                  disabled={backupDiagnosticsLoading}
+                  className="px-3 py-1 text-xs rounded-full bg-stone-900 text-white hover:bg-stone-800 disabled:opacity-60"
+                >
+                  {backupDiagnosticsLoading ? 'Refreshing…' : 'Refresh Diagnostics'}
+                </button>
+              </div>
+              {backupDiagnosticsError && (
+                <p className="text-xs text-red-600 mt-2">{backupDiagnosticsError}</p>
+              )}
+              <p className="text-xs text-stone-500 mt-2">
+                Diagnostics are sourced from <span className="font-mono">/api/backups/diagnostics</span> and show the expected transfer mode per device.
+              </p>
             </div>
 
             <div className="rm-card bg-white p-4 rounded-2xl border border-stone-200 shadow-sm">
