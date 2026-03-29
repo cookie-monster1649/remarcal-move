@@ -993,19 +993,29 @@ export default function App() {
                     const docsForDevice = documents.filter((d) => d.device_id === dev.id);
                     const syncRunning = docsForDevice.some((d) => d.sync_status === 'syncing' || !!manualSyncStatus[d.id]);
                     const syncErrored = docsForDevice.some((d) => d.sync_status === 'error');
+                    const connectionState = deviceStatus[dev.id] || 'disconnected';
                     return (
-                    <div key={dev.id} className="rm-card bg-white p-6 rounded-2xl border border-stone-200 shadow-sm flex justify-between items-start gap-4">
-                        <div>
-                            <div className="flex items-center gap-2">
+                    <div key={dev.id} className="rm-card bg-white p-5 md:p-6 rounded-2xl border border-stone-200 shadow-sm flex flex-col lg:flex-row justify-between items-start gap-4">
+                        <div className="flex-1 min-w-0">
+                            <div className="flex flex-wrap items-center gap-2">
                                 <Tablet size={18} />
                                 <h3 className="font-bold">{dev.name}</h3>
-                                {deviceStatus[dev.id] === 'connected' && <Wifi size={14} className="text-green-500" title="Connected" />}
-                                {deviceStatus[dev.id] === 'disconnected' && <WifiOff size={14} className="text-red-500" title="Disconnected" />}
-                                {deviceStatus[dev.id] === 'checking' && <RefreshCw size={14} className="animate-spin text-stone-400" title="Checking..." />}
+                                <span className={`inline-flex items-center gap-1 px-2 py-0.5 text-xs rounded-full border ${
+                                  connectionState === 'connected'
+                                    ? 'bg-green-50 border-green-200 text-green-700'
+                                    : connectionState === 'checking'
+                                      ? 'bg-stone-50 border-stone-300 text-stone-600'
+                                      : 'bg-red-50 border-red-200 text-red-700'
+                                }`}>
+                                  {connectionState === 'connected' && <Wifi size={12} />}
+                                  {connectionState === 'disconnected' && <WifiOff size={12} />}
+                                  {connectionState === 'checking' && <RefreshCw size={12} className="animate-spin" />}
+                                  {connectionState === 'connected' ? 'Connected' : connectionState === 'checking' ? 'Checking' : 'Offline'}
+                                </span>
                             </div>
-                            <p className="text-sm text-stone-500 font-mono mt-1">{dev.username}@{dev.host}:{dev.port}</p>
+                            <p className="text-sm text-stone-500 font-mono mt-1 break-all">{dev.username}@{dev.host}:{dev.port}</p>
                             {diagnostics && (
-                              <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+                              <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
                                 <span className={`px-2 py-0.5 rounded-full border ${diagnostics.will_use_rsync ? 'bg-green-50 border-green-200 text-green-700' : 'bg-amber-50 border-amber-200 text-amber-700'}`}>
                                   Transfer: {diagnostics.expected_transfer_method.toUpperCase()}
                                 </span>
@@ -1020,7 +1030,7 @@ export default function App() {
                             {diagnostics && (
                               <p className="text-[11px] text-stone-500 mt-1">{diagnostics.reason}</p>
                             )}
-                            <div className="mt-2 flex items-center gap-2 text-xs">
+                            <div className="mt-3 flex items-center gap-2 text-xs">
                               <span className={`px-2 py-0.5 rounded-full border ${dev.auth_mode === 'key' ? 'bg-green-50 border-green-200 text-green-700' : 'bg-amber-50 border-amber-200 text-amber-700'}`}>
                                 Auth: {dev.auth_mode === 'key' ? 'SSH key' : 'Password'}
                               </span>
@@ -1047,7 +1057,7 @@ export default function App() {
                               <button
                                 onClick={() => runDeviceBackup(dev.id)}
                                 disabled={backupRunning}
-                                className="px-3 py-1 text-xs rounded-full bg-stone-900 text-white hover:bg-stone-800 disabled:opacity-60"
+                                className="px-3 py-1 text-xs rounded-full bg-stone-900 text-white hover:bg-stone-800 disabled:opacity-60 whitespace-nowrap"
                               >
                                 {backupRunning ? 'Backing up…' : 'Run Backup Now'}
                               </button>
@@ -1074,7 +1084,7 @@ export default function App() {
                             </div>
                             <p className="text-xs text-stone-400 mt-2">Last connected: {new Date(dev.last_connected_at).toLocaleString()}</p>
                         </div>
-                        <div className="flex gap-2">
+                        <div className="flex gap-2 self-end lg:self-start shrink-0">
                             <button 
                                 onClick={() => {
                                     setEditingDevice(dev);
@@ -1295,8 +1305,8 @@ export default function App() {
 
       {/* Document Modal */}
       {showDocForm && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-            <div className="bg-white rounded-2xl p-8 max-w-md w-full shadow-xl max-h-[90vh] overflow-y-auto">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 overflow-y-auto">
+            <div className="bg-white rounded-2xl p-8 max-w-md w-full shadow-xl max-h-[calc(100vh-2rem)] overflow-y-auto">
                 <h3 className="text-xl font-bold mb-4">{editingDoc ? 'Edit Document' : 'New Document'}</h3>
                 {modalError && (
                     <div className="mb-4 p-3 bg-red-50 text-red-700 rounded-lg text-sm flex items-center gap-2">
@@ -1437,8 +1447,8 @@ export default function App() {
 
       {/* Device Modal */}
       {showDeviceForm && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-            <div className="bg-white rounded-2xl p-8 max-w-md w-full shadow-xl">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 overflow-y-auto">
+            <div className="bg-white rounded-2xl p-8 max-w-md w-full shadow-xl max-h-[calc(100vh-2rem)] overflow-y-auto">
                 <h3 className="text-xl font-bold mb-4">{editingDevice ? 'Edit Device' : 'New Device'}</h3>
                 {modalError && (
                     <div className="mb-4 p-3 bg-red-50 text-red-700 rounded-lg text-sm flex items-center gap-2">
@@ -1591,8 +1601,8 @@ export default function App() {
 
       {/* Account Modal */}
       {showAccountForm && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-            <div className="bg-white rounded-2xl p-8 max-w-md w-full shadow-xl">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 overflow-y-auto">
+            <div className="bg-white rounded-2xl p-8 max-w-md w-full shadow-xl max-h-[calc(100vh-2rem)] overflow-y-auto">
                 <h3 className="text-xl font-bold mb-4">{editingAccount ? 'Edit Account' : 'New Account'}</h3>
                 {modalError && (
                     <div className="mb-4 p-3 bg-red-50 text-red-700 rounded-lg text-sm flex items-center gap-2">
@@ -1739,8 +1749,8 @@ export default function App() {
 
       {/* Subscription Modal */}
       {showSubscriptionForm && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl p-8 max-w-md w-full shadow-xl">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 overflow-y-auto">
+          <div className="bg-white rounded-2xl p-8 max-w-md w-full shadow-xl max-h-[calc(100vh-2rem)] overflow-y-auto">
             <h3 className="text-xl font-bold mb-4">{editingSubscription ? 'Edit Subscription' : 'New Subscription'}</h3>
             {modalError && (
               <div className="mb-4 p-3 bg-red-50 text-red-700 rounded-lg text-sm flex items-center gap-2">
