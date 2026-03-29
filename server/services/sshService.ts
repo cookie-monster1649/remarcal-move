@@ -40,6 +40,10 @@ export interface SnapshotOptions {
   isCancelled?: () => boolean;
 }
 
+export interface UploadOptions {
+  onProgress?: (transferredBytes: number, totalBytes: number) => void;
+}
+
 export class SSHService {
   private config: SSHConfig;
   private observedHostKeyFingerprint: string | null = null;
@@ -552,7 +556,7 @@ export class SSHService {
     });
   }
 
-  async uploadPDF(remotePath: string, localPdfPath: string, visibleName?: string): Promise<void> {
+  async uploadPDF(remotePath: string, localPdfPath: string, visibleName?: string, options?: UploadOptions): Promise<void> {
     const isDryRun = process.env.SYNC_DRY_RUN === 'true';
     if (isDryRun) {
       console.log(`[DRY RUN] Would upload ${localPdfPath} to ${remotePath}`);
@@ -574,9 +578,17 @@ export class SSHService {
           return reject(err);
         }
 
-        const uploadFile = (local: string, remote: string) => {
+        const uploadFile = (local: string, remote: string, reportProgress = false) => {
           return new Promise<void>((res, rej) => {
-            sftp.fastPut(local, remote, (putErr) => {
+            const totalBytes = reportProgress ? fs.statSync(local).size : 0;
+            sftp.fastPut(local, remote, {
+              step: reportProgress
+                ? (transferred: number, _chunk: number, total: number) => {
+                    const knownTotal = total || totalBytes || 1;
+                    options?.onProgress?.(transferred, knownTotal);
+                  }
+                : undefined,
+            }, (putErr) => {
               if (putErr) rej(putErr);
               else res();
             });
@@ -585,7 +597,7 @@ export class SSHService {
 
         const runUpload = async () => {
           try {
-            await uploadFile(localPdfPath, tempPath);
+            await uploadFile(localPdfPath, tempPath, true);
 
             const localHash = crypto.createHash('sha256').update(fs.readFileSync(localPdfPath)).digest('hex');
             const remoteHash = await new Promise<string>((res, rej) => {

@@ -16,6 +16,16 @@ const pdfService = new PDFService();
 const DEFAULT_SYNC_OPERATION_TIMEOUT_MS = 3 * 60 * 1000;
 const cancelRequested = new Set<string>();
 const activeSyncByDoc = new Set<string>();
+type SyncPhase =
+  | 'idle'
+  | 'queued'
+  | 'preparing'
+  | 'generating_pdf'
+  | 'uploading'
+  | 'finalizing'
+  | 'done'
+  | 'cancelled'
+  | 'error';
 
 function getSyncTimeoutMs(): number {
   const raw = Number(process.env.SYNC_OPERATION_TIMEOUT_MS || DEFAULT_SYNC_OPERATION_TIMEOUT_MS);
@@ -80,6 +90,42 @@ const queuedSyncByDevice = new Map<string, Set<string>>();
 const queuedSyncTimers = new Map<string, NodeJS.Timeout>();
 
 export class SyncService {
+  private setSyncState(docId: string, state: { status?: string; phase?: SyncPhase; progress?: number; error?: string | null }) {
+    const current = db.prepare('SELECT sync_status, sync_phase, sync_progress, last_error FROM documents WHERE id = ?').get(docId) as any;
+    if (!current) return;
+
+    const status = state.status ?? current.sync_status ?? 'idle';
+    const phase = state.phase ?? current.sync_phase ?? 'idle';
+    const progress = Math.max(0, Math.min(100, Math.round(state.progress ?? current.sync_progress ?? 0)));
+    const error = state.error !== undefined ? state.error : current.last_error;
+
+    db.prepare(`
+      UPDATE documents
+      SET sync_status = ?,
+          sync_phase = ?,
+          sync_progress = ?,
+          last_error = ?,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(status, phase, progress, error, docId);
+  }
+
+  private buildUploadProgressReporter(docId: string): (transferredBytes: number, totalBytes: number) => void {
+    let lastPercent = -1;
+    let lastUpdateAt = 0;
+    return (transferredBytes: number, totalBytes: number) => {
+      if (!Number.isFinite(totalBytes) || totalBytes <= 0) return;
+      const raw = Math.floor((transferredBytes / totalBytes) * 100);
+      const uploadPercent = Math.max(0, Math.min(100, raw));
+      const overall = 65 + Math.floor(uploadPercent * 0.30); // map upload to 65-95%
+      const now = Date.now();
+      if (Math.abs(overall - lastPercent) < 2 && now - lastUpdateAt < 500) return;
+      lastPercent = overall;
+      lastUpdateAt = now;
+      this.setSyncState(docId, { status: 'syncing', phase: 'uploading', progress: overall, error: null });
+    };
+  }
+
   cancelSync(docId: string): boolean {
     cancelRequested.add(docId);
 
@@ -92,13 +138,13 @@ export class SyncService {
       }
     }
 
-    const reset = db.prepare(`
-      UPDATE documents
-      SET sync_status = 'idle',
-          last_error = 'Sync cancelled by user',
-          updated_at = CURRENT_TIMESTAMP
-      WHERE id = ? AND sync_status IN ('syncing', 'queued', 'checking')
-    `).run(docId);
+    this.setSyncState(docId, {
+      status: 'idle',
+      phase: 'cancelled',
+      progress: 0,
+      error: 'Sync cancelled by user',
+    });
+    const reset = db.prepare('SELECT changes() AS changes').get() as any;
 
     infoLogService.write('sync.cancel_requested', {
       docId,
@@ -315,7 +361,7 @@ export class SyncService {
         const busyWithBackup = lock.reason.includes('backup');
         if (busyWithBackup) {
           this.queueSync(device.id, docId);
-          db.prepare('UPDATE documents SET sync_status = ?, last_error = NULL WHERE id = ?').run('queued', docId);
+          this.setSyncState(docId, { status: 'queued', phase: 'queued', progress: 0, error: null });
           infoLogService.write('sync.queued', { docId, deviceId: device.id, reason: lock.reason }, 'info');
           this.scheduleQueuedSyncAttempt(device.id);
           return;
@@ -328,12 +374,13 @@ export class SyncService {
       }
 
       // Update status to syncing
-      db.prepare('UPDATE documents SET sync_status = ?, last_error = NULL WHERE id = ?').run('syncing', docId);
+      this.setSyncState(docId, { status: 'syncing', phase: 'preparing', progress: 5, error: null });
       infoLogService.write('sync.started', { docId, deviceId: device.id, remotePath: doc.remote_path });
       activeSyncByDoc.add(docId);
 
       try {
         ensureNotCancelled(docId);
+        this.setSyncState(docId, { status: 'syncing', phase: 'generating_pdf', progress: 25, error: null });
 
         const { localPath } = await withTimeout(
           this.generateDocumentPDF(docId),
@@ -341,19 +388,32 @@ export class SyncService {
           `PDF generation timed out after ${timeoutMs}ms`,
         );
         ensureNotCancelled(docId);
+        this.setSyncState(docId, { status: 'syncing', phase: 'uploading', progress: 65, error: null });
 
         const sshConfig = buildDeviceSshConfig(device);
         const deviceSshService = new SSHService(sshConfig);
         await withTimeout(
-          deviceSshService.uploadPDF(doc.remote_path, localPath, doc.title),
+          deviceSshService.uploadPDF(doc.remote_path, localPath, doc.title, {
+            onProgress: this.buildUploadProgressReporter(docId),
+          }),
           timeoutMs,
           `PDF upload timed out after ${timeoutMs}ms`,
         );
         ensureNotCancelled(docId);
+        this.setSyncState(docId, { status: 'syncing', phase: 'finalizing', progress: 95, error: null });
 
         // 5. Update Status
         const completedAt = new Date().toISOString();
-        db.prepare('UPDATE documents SET sync_status = ?, last_synced_at = ?, last_error = NULL WHERE id = ?').run('idle', completedAt, docId);
+        db.prepare(`
+          UPDATE documents
+          SET sync_status = 'idle',
+              sync_phase = 'done',
+              sync_progress = 100,
+              last_synced_at = ?,
+              last_error = NULL,
+              updated_at = CURRENT_TIMESTAMP
+          WHERE id = ?
+        `).run(completedAt, docId);
         infoLogService.write('sync.completed', { docId, deviceId: device.id, at: completedAt });
       } finally {
         deviceOperationService.release(device.id, 'sync');
@@ -367,11 +427,10 @@ export class SyncService {
       const message = error?.message || 'Unknown sync error';
       const cancelled = !!error?.syncCancelled || String(message).toLowerCase().includes('cancel');
       if (cancelled) {
-        db.prepare('UPDATE documents SET sync_status = ?, last_error = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
-          .run('idle', 'Sync cancelled by user', docId);
+        this.setSyncState(docId, { status: 'idle', phase: 'cancelled', progress: 0, error: 'Sync cancelled by user' });
         infoLogService.write('sync.cancelled', { docId }, 'warn');
       } else {
-        db.prepare('UPDATE documents SET sync_status = ?, last_error = ? WHERE id = ?').run('error', message, docId);
+        this.setSyncState(docId, { status: 'error', phase: 'error', progress: 0, error: message });
       }
       if (error?.syncSkipped) {
         infoLogService.write('sync.skipped', { docId, reason: 'precondition_failed', detail: error.message }, 'warn');

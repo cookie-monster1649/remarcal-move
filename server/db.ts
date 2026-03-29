@@ -79,7 +79,9 @@ export function initDb() {
       type TEXT DEFAULT 'pdf',
       remote_path TEXT,
       last_synced_at TEXT,
-      sync_status TEXT DEFAULT 'idle', -- idle, checking, syncing, error
+      sync_status TEXT DEFAULT 'idle', -- idle, checking, queued, syncing, error
+      sync_phase TEXT DEFAULT 'idle',
+      sync_progress INTEGER DEFAULT 0,
       last_error TEXT,
       year INTEGER DEFAULT 2025,
       timezone TEXT DEFAULT 'UTC',
@@ -165,6 +167,18 @@ export function initDb() {
     db.exec("ALTER TABLE documents ADD COLUMN timezone TEXT DEFAULT 'UTC'");
   }
 
+  const hasSyncPhase = docsTableInfo.some(col => col.name === 'sync_phase');
+  if (!hasSyncPhase) {
+    console.log('Migrating documents: adding sync_phase column');
+    db.exec("ALTER TABLE documents ADD COLUMN sync_phase TEXT DEFAULT 'idle'");
+  }
+
+  const hasSyncProgress = docsTableInfo.some(col => col.name === 'sync_progress');
+  if (!hasSyncProgress) {
+    console.log('Migrating documents: adding sync_progress column');
+    db.exec('ALTER TABLE documents ADD COLUMN sync_progress INTEGER DEFAULT 0');
+  }
+
   const hasSyncEnabled = docsTableInfo.some(col => col.name === 'sync_enabled');
   const hasSyncSchedule = docsTableInfo.some(col => col.name === 'sync_schedule');
   if (hasSyncEnabled || hasSyncSchedule) {
@@ -181,6 +195,8 @@ export function initDb() {
           remote_path TEXT,
           last_synced_at TEXT,
           sync_status TEXT DEFAULT 'idle',
+          sync_phase TEXT DEFAULT 'idle',
+          sync_progress INTEGER DEFAULT 0,
           last_error TEXT,
           year INTEGER DEFAULT 2025,
           timezone TEXT DEFAULT 'UTC',
@@ -193,11 +209,11 @@ export function initDb() {
         );
 
         INSERT INTO documents (
-          id, title, type, remote_path, last_synced_at, sync_status, last_error,
+          id, title, type, remote_path, last_synced_at, sync_status, sync_phase, sync_progress, last_error,
           year, timezone, caldav_account_id, device_id, created_at, updated_at
         )
         SELECT
-          id, title, type, remote_path, last_synced_at, sync_status, last_error,
+          id, title, type, remote_path, last_synced_at, sync_status, 'idle', 0, last_error,
           year, timezone, caldav_account_id, device_id, created_at, updated_at
         FROM documents_old;
 
@@ -347,7 +363,13 @@ export function initDb() {
   }
 
   // Cleanup: Reset transient in-progress statuses left by crashes/restarts.
-  db.prepare("UPDATE documents SET sync_status = 'idle' WHERE sync_status IN ('syncing', 'checking')").run();
+  db.prepare(`
+    UPDATE documents
+    SET sync_status = 'idle',
+        sync_phase = 'idle',
+        sync_progress = 0
+    WHERE sync_status IN ('syncing', 'checking')
+  `).run();
   
   console.log('Database initialized at', DB_PATH);
 }

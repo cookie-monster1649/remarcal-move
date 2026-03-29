@@ -12,6 +12,8 @@ interface Document {
   remote_path: string;
   last_synced_at: string;
   sync_status: 'idle' | 'checking' | 'queued' | 'syncing' | 'error';
+  sync_phase?: 'idle' | 'queued' | 'preparing' | 'generating_pdf' | 'uploading' | 'finalizing' | 'done' | 'cancelled' | 'error';
+  sync_progress?: number;
   last_error: string;
   year: number;
   timezone: string;
@@ -790,6 +792,8 @@ export default function App() {
                     {documents.map(doc => {
                         const isSyncing = doc.sync_status === 'syncing' || !!manualSyncStatus[doc.id];
                         const isQueued = doc.sync_status === 'queued';
+                        const rawProgress = typeof doc.sync_progress === 'number' ? doc.sync_progress : (isSyncing ? 10 : 0);
+                        const progress = Math.max(0, Math.min(100, Math.round(rawProgress)));
                         return (
                         <div key={doc.id} className="rm-card bg-white p-6 rounded-2xl border border-stone-200 shadow-sm flex flex-col md:flex-row justify-between gap-4">
                             <div className="flex-1">
@@ -813,6 +817,20 @@ export default function App() {
                                         <span className="text-amber-700">Queued (waiting for backup/device lock)</span>
                                     )}
                                 </div>
+                                {(isSyncing || isQueued) && (
+                                  <div className="mt-3">
+                                    <div className="flex justify-between text-[11px] text-stone-600 mb-1">
+                                      <span>{getSyncPhaseLabel(doc.sync_phase)}</span>
+                                      <span>{progress}%</span>
+                                    </div>
+                                    <div className="h-2 w-full bg-stone-200 rounded-full overflow-hidden">
+                                      <div
+                                        className="h-full bg-blue-500 transition-all duration-300"
+                                        style={{ width: `${progress}%` }}
+                                      />
+                                    </div>
+                                  </div>
+                                )}
                                 {doc.last_error && (
                                     <p className="text-xs text-red-600 mt-2 bg-red-50 p-2 rounded">Error: {doc.last_error}</p>
                                 )}
@@ -1709,3 +1727,16 @@ export default function App() {
     </div>
   );
 }
+  const getSyncPhaseLabel = (phase?: Document['sync_phase']) => {
+    switch (phase) {
+      case 'queued': return 'Queued';
+      case 'preparing': return 'Preparing sync';
+      case 'generating_pdf': return 'Generating PDF';
+      case 'uploading': return 'Uploading to device';
+      case 'finalizing': return 'Finalizing';
+      case 'done': return 'Complete';
+      case 'cancelled': return 'Cancelled';
+      case 'error': return 'Failed';
+      default: return 'Syncing';
+    }
+  };
