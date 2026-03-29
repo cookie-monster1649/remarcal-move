@@ -1,6 +1,13 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Calendar, Settings, Plus, Trash2, RefreshCw, CheckCircle, XCircle, Clock, Tablet, Wifi, WifiOff, Download, LogOut, Shield } from 'lucide-react';
 import axios from 'axios';
+import { Badge } from './components/ui/badge';
+import { Button } from './components/ui/button';
+import { Card, CardContent } from './components/ui/card';
+import { Input } from './components/ui/input';
+import { Label } from './components/ui/label';
+import { Progress } from './components/ui/progress';
+import { cn, safeParseJsonArray } from './lib/utils';
 
 axios.defaults.withCredentials = true;
 
@@ -110,7 +117,19 @@ interface InfoLogEvent {
   [key: string]: any;
 }
 
+interface UiToast {
+  id: number;
+  kind: 'success' | 'error' | 'info';
+  message: string;
+}
+
 export default function App() {
+  const DATA_POLL_MS = 120000;
+  const DEVICE_CHECK_MS = 120000;
+  const ACTIVE_PROGRESS_POLL_MS = 5000;
+  const IDLE_PROGRESS_POLL_MS = 120000;
+  const DIAGNOSTICS_POLL_MS = 120000;
+
   const [activeTab, setActiveTab] = useState<'library' | 'settings' | 'devices'>('library');
   const [documents, setDocuments] = useState<Document[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
@@ -136,6 +155,15 @@ export default function App() {
   const [authPassword, setAuthPassword] = useState('');
   const [authSubmitting, setAuthSubmitting] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
+  const [toasts, setToasts] = useState<UiToast[]>([]);
+  const toastIdRef = useRef(0);
+  const [confirmState, setConfirmState] = useState<{ open: boolean; title: string; description: string; onConfirm: (() => Promise<void>) | null }>({
+    open: false,
+    title: '',
+    description: '',
+    onConfirm: null,
+  });
+  const [confirmSubmitting, setConfirmSubmitting] = useState(false);
 
   // Forms state
   const [showDocForm, setShowDocForm] = useState(false);
@@ -189,6 +217,77 @@ export default function App() {
     backup_frequency_hours: 24,
     allow_password_fallback: true,
   });
+  const isAnyFormModalOpen = showDocForm || showDeviceForm || showAccountForm || showSubscriptionForm;
+  const docModalRef = useRef<HTMLDivElement | null>(null);
+  const deviceModalRef = useRef<HTMLDivElement | null>(null);
+  const accountModalRef = useRef<HTMLDivElement | null>(null);
+  const subscriptionModalRef = useRef<HTMLDivElement | null>(null);
+
+  const pushToast = (kind: UiToast['kind'], message: string) => {
+    const id = ++toastIdRef.current;
+    setToasts((prev) => [...prev, { id, kind, message }]);
+    setTimeout(() => {
+      setToasts((prev) => prev.filter((t) => t.id !== id));
+    }, 4000);
+  };
+
+  const openConfirm = (title: string, description: string, onConfirm: () => Promise<void>) => {
+    setConfirmState({ open: true, title, description, onConfirm });
+  };
+
+  const closeConfirm = () => {
+    if (confirmSubmitting) return;
+    setConfirmState({ open: false, title: '', description: '', onConfirm: null });
+  };
+
+  useEffect(() => {
+    if (!isAnyFormModalOpen && !confirmState.open) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      if (confirmState.open) {
+        closeConfirm();
+        return;
+      }
+      if (showDocForm) setShowDocForm(false);
+      if (showDeviceForm) setShowDeviceForm(false);
+      if (showAccountForm) setShowAccountForm(false);
+      if (showSubscriptionForm) setShowSubscriptionForm(false);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [isAnyFormModalOpen, confirmState.open, confirmSubmitting, showDocForm, showDeviceForm, showAccountForm, showSubscriptionForm]);
+
+  useEffect(() => {
+    if (!isAnyFormModalOpen) return;
+    const root = showDocForm
+      ? docModalRef.current
+      : showDeviceForm
+        ? deviceModalRef.current
+        : showAccountForm
+          ? accountModalRef.current
+          : subscriptionModalRef.current;
+    if (!root) return;
+    const target = root.querySelector<HTMLElement>('input, select, textarea, button');
+    target?.focus();
+  }, [isAnyFormModalOpen, showDocForm, showDeviceForm, showAccountForm, showSubscriptionForm]);
+
+  const trapFocusWithin = (event: React.KeyboardEvent, root: HTMLDivElement | null) => {
+    if (event.key !== 'Tab' || !root) return;
+    const focusable = root.querySelectorAll<HTMLElement>(
+      'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
+    );
+    if (focusable.length === 0) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    const active = document.activeElement;
+    if (event.shiftKey && active === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && active === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  };
 
   const fetchData = async () => {
     if (!authenticated) return;
@@ -297,18 +396,18 @@ export default function App() {
   useEffect(() => {
     if (!authenticated) return;
     fetchData();
-    const interval = setInterval(fetchData, 10000); // Poll every 10s
+    const interval = setInterval(fetchData, DATA_POLL_MS);
     return () => clearInterval(interval);
-  }, [authenticated]);
+  }, [authenticated, DATA_POLL_MS]);
 
   useEffect(() => {
     if (!authenticated) return;
     if (devices.length > 0) {
         checkConnections();
-        const interval = setInterval(checkConnections, 30000); // Check every 30s
+        const interval = setInterval(checkConnections, DEVICE_CHECK_MS);
         return () => clearInterval(interval);
     }
-  }, [authenticated, devices.length]); // Re-run when devices list changes
+  }, [authenticated, devices.length, DEVICE_CHECK_MS]); // Re-run when devices list changes
 
   const handleDocSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -430,43 +529,35 @@ export default function App() {
   };
 
   const deleteDoc = async (id: string) => {
-    if (!confirm('Are you sure?')) return;
-    try {
+    openConfirm('Delete document?', 'This action cannot be undone.', async () => {
       await axios.delete(`/api/library/${id}`);
-      fetchData();
-    } catch (err: any) {
-      alert(err.message);
-    }
+      await fetchData();
+      pushToast('success', 'Document deleted');
+    });
   };
 
   const deleteAccount = async (id: string) => {
-    if (!confirm('Are you sure?')) return;
-    try {
+    openConfirm('Delete CalDAV account?', 'This removes the account from all document sync jobs.', async () => {
       await axios.delete(`/api/settings/${id}`);
-      fetchData();
-    } catch (err: any) {
-      alert(err.message);
-    }
+      await fetchData();
+      pushToast('success', 'Account deleted');
+    });
   };
 
   const deleteDevice = async (id: string) => {
-    if (!confirm('Are you sure?')) return;
-    try {
+    openConfirm('Delete device?', 'Any documents assigned to this device will need a new target device.', async () => {
       await axios.delete(`/api/devices/${id}`);
-      fetchData();
-    } catch (err: any) {
-      alert(err.message);
-    }
+      await fetchData();
+      pushToast('success', 'Device deleted');
+    });
   };
 
   const deleteSubscription = async (id: string) => {
-    if (!confirm('Are you sure?')) return;
-    try {
+    openConfirm('Delete subscription?', 'Future fetches for this feed will stop.', async () => {
       await axios.delete(`/api/settings/subscriptions/${id}`);
-      fetchData();
-    } catch (err: any) {
-      alert(err.message);
-    }
+      await fetchData();
+      pushToast('success', 'Subscription deleted');
+    });
   };
 
   const testAccount = async (id: string) => {
@@ -526,7 +617,7 @@ export default function App() {
       await axios.post(`/api/library/${id}/sync`);
       fetchData();
     } catch (err: any) {
-      alert(err.response?.data?.error || err.message || 'Failed to sync');
+      pushToast('error', err.response?.data?.error || err.message || 'Failed to sync');
     } finally {
       setManualSyncStatus(prev => {
         const next = { ...prev };
@@ -541,7 +632,7 @@ export default function App() {
       await axios.post(`/api/library/${id}/sync/cancel`);
       await fetchData();
     } catch (err: any) {
-      alert(err.response?.data?.error || err.message || 'Failed to cancel sync');
+      pushToast('error', err.response?.data?.error || err.message || 'Failed to cancel sync');
     } finally {
       setManualSyncStatus(prev => {
         const next = { ...prev };
@@ -557,7 +648,7 @@ export default function App() {
       await axios.post(`/api/backups/device/${deviceId}`);
       await fetchData();
     } catch (err: any) {
-      alert(err.response?.data?.error || err.message || 'Failed to start backup');
+      pushToast('error', err.response?.data?.error || err.message || 'Failed to start backup');
     } finally {
       setManualBackupStatus(prev => {
         const next = { ...prev };
@@ -578,7 +669,7 @@ export default function App() {
         delete next[backupId];
         return next;
       });
-      alert(err.response?.data?.error || err.message || 'Failed to cancel backup');
+      pushToast('error', err.response?.data?.error || err.message || 'Failed to cancel backup');
     }
   };
 
@@ -588,7 +679,7 @@ export default function App() {
       await axios.post(`/api/devices/${deviceId}/enroll-key`);
       await fetchData();
     } catch (err: any) {
-      alert(err.response?.data?.error || err.message || 'Failed to enroll SSH key');
+      pushToast('error', err.response?.data?.error || err.message || 'Failed to enroll SSH key');
     } finally {
       setEnrollKeyStatus(prev => {
         const next = { ...prev };
@@ -668,12 +759,14 @@ export default function App() {
       }
     };
 
+    const hasRunningBackups = backups.some((b) => b.status === 'running');
+    const intervalMs = hasRunningBackups ? ACTIVE_PROGRESS_POLL_MS : IDLE_PROGRESS_POLL_MS;
     void poll();
     const interval = setInterval(() => {
       void poll();
-    }, 2000);
+    }, intervalMs);
     return () => clearInterval(interval);
-  }, [authenticated, activeTab, backups]);
+  }, [authenticated, activeTab, backups, ACTIVE_PROGRESS_POLL_MS, IDLE_PROGRESS_POLL_MS]);
 
   useEffect(() => {
     if (!authenticated) return;
@@ -682,9 +775,9 @@ export default function App() {
     void loadBackupDiagnostics();
     const interval = setInterval(() => {
       void loadBackupDiagnostics();
-    }, 15000);
+    }, DIAGNOSTICS_POLL_MS);
     return () => clearInterval(interval);
-  }, [authenticated, activeTab, devices.length]);
+  }, [authenticated, activeTab, devices.length, DIAGNOSTICS_POLL_MS]);
 
   const downloadDocPdf = async (doc: Document) => {
     try {
@@ -705,7 +798,7 @@ export default function App() {
       link.remove();
       window.URL.revokeObjectURL(url);
     } catch (err: any) {
-      alert(err.response?.data?.error || err.message || 'Failed to download PDF');
+      pushToast('error', err.response?.data?.error || err.message || 'Failed to download PDF');
     }
   };
 
@@ -722,96 +815,78 @@ export default function App() {
             </div>
             {authError && <div className="text-sm text-red-600 bg-red-50 border border-red-100 rounded p-2">{authError}</div>}
             <div>
-              <label className="block text-sm font-medium mb-1">Admin password</label>
-              <input
+              <Label className="mb-1 block">Admin password</Label>
+              <Input
                 type="password"
-                className="w-full px-3 py-2 border rounded-lg"
                 value={authPassword}
                 onChange={(e) => setAuthPassword(e.target.value)}
                 required
               />
             </div>
-            <button type="submit" disabled={authSubmitting} className="w-full px-4 py-2 bg-stone-900 text-white rounded-lg hover:bg-stone-800 disabled:opacity-50">
+            <Button type="submit" disabled={authSubmitting} className="w-full">
               {authSubmitting ? 'Signing in…' : 'Sign in'}
-            </button>
+            </Button>
           </form>
         </div>
       ) : (
       <>
-      <header className="remarkable-header bg-white border-b border-stone-200 p-4 sticky top-0 z-10">
-        <div className="max-w-5xl mx-auto flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <div className="rm-brand-mark w-8 h-8 bg-stone-900 text-white flex items-center justify-center rounded-lg">
-              <Calendar size={20} />
+      <header className="remarkable-header sticky top-0 z-20 border-b border-stone-200/80 bg-white/90 p-4 backdrop-blur">
+        <div className="max-w-6xl mx-auto space-y-3">
+          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <div className="flex items-center gap-3">
+              <div className="rm-brand-mark w-8 h-8 bg-stone-900 text-white flex items-center justify-center rounded-lg">
+                <Calendar size={20} />
+              </div>
+              <div>
+                <h1 className="rm-brand-title text-2xl leading-none tracking-tight">remarcal-move</h1>
+                <p className="text-xs text-stone-500 mt-1">Calendar sync orchestration for reMarkable devices</p>
+              </div>
             </div>
-            <h1 className="rm-brand-title text-xl font-bold tracking-tight">remarcal-move</h1>
-            
-            {/* Device Status Indicators (per device) */}
-            {devices.length > 0 && (
-                <div className="ml-4 flex flex-wrap items-center gap-2 text-xs">
-                    {devices.map((dev) => {
-                      const status = deviceStatus[dev.id] || 'disconnected';
-                      const isChecking = status === 'checking';
-                      const isConnected = status === 'connected';
-
-                      return (
-                        <button
-                          key={dev.id}
-                          type="button"
-                          onClick={() => checkConnectionForDevice(dev.id)}
-                          disabled={isChecking}
-                          className="flex items-center gap-2 px-3 py-1 bg-stone-50 rounded-full border border-stone-200 text-xs hover:bg-stone-100 disabled:opacity-70"
-                          title={`Click to test connection: ${dev.name}`}
-                        >
-                          {isChecking ? (
-                            <RefreshCw size={14} className="animate-spin text-stone-400" />
-                          ) : isConnected ? (
-                            <Wifi size={14} className="text-green-500" />
-                          ) : (
-                            <WifiOff size={14} className="text-red-500" />
-                          )}
-                          <span className="font-bold text-stone-800">{dev.name}</span>
-                          <span className="text-stone-600">
-                            {isChecking ? 'Checking...' : isConnected ? 'Connected' : 'Disconnected'}
-                          </span>
-                        </button>
-                      );
-                    })}
-                </div>
-            )}
+            <nav className="flex flex-wrap items-center gap-2">
+              <Button onClick={() => setActiveTab('library')} variant={activeTab === 'library' ? 'default' : 'secondary'} size="sm">Library</Button>
+              <Button onClick={() => setActiveTab('devices')} variant={activeTab === 'devices' ? 'default' : 'secondary'} size="sm">Devices</Button>
+              <Button onClick={() => setActiveTab('settings')} variant={activeTab === 'settings' ? 'default' : 'secondary'} size="sm">Calendars</Button>
+              <Button onClick={handleLogout} variant="ghost" size="sm" className="gap-1">
+                <LogOut size={14} />
+                Logout
+              </Button>
+            </nav>
           </div>
-          <nav className="flex gap-4">
-            <button 
-              onClick={() => setActiveTab('library')}
-              className={`rm-nav-button ${activeTab === 'library' ? 'rm-nav-active' : ''} px-3 py-2 rounded-lg text-sm font-medium ${activeTab === 'library' ? 'bg-stone-100 text-stone-900' : 'text-stone-500 hover:text-stone-900'}`}
-            >
-              Library
-            </button>
-            <button 
-              onClick={() => setActiveTab('devices')}
-              className={`rm-nav-button ${activeTab === 'devices' ? 'rm-nav-active' : ''} px-3 py-2 rounded-lg text-sm font-medium ${activeTab === 'devices' ? 'bg-stone-100 text-stone-900' : 'text-stone-500 hover:text-stone-900'}`}
-            >
-              Devices
-            </button>
-            <button 
-              onClick={() => setActiveTab('settings')}
-              className={`rm-nav-button ${activeTab === 'settings' ? 'rm-nav-active' : ''} px-3 py-2 rounded-lg text-sm font-medium ${activeTab === 'settings' ? 'bg-stone-100 text-stone-900' : 'text-stone-500 hover:text-stone-900'}`}
-            >
-              Calendars
-            </button>
-            <button
-              onClick={handleLogout}
-              className="px-3 py-2 rounded-lg text-sm font-medium text-stone-500 hover:text-stone-900 flex items-center gap-1"
-              title="Logout"
-            >
-              <LogOut size={14} />
-              Logout
-            </button>
-          </nav>
+          {devices.length > 0 && (
+            <div className="flex flex-wrap items-center gap-2 text-xs">
+              {devices.map((dev) => {
+                const status = deviceStatus[dev.id] || 'disconnected';
+                const isChecking = status === 'checking';
+                const isConnected = status === 'connected';
+                return (
+                  <Button
+                    key={dev.id}
+                    type="button"
+                    size="sm"
+                    variant="secondary"
+                    onClick={() => checkConnectionForDevice(dev.id)}
+                    disabled={isChecking}
+                    className="h-8 rounded-full border-stone-300"
+                    title={`Click to test connection: ${dev.name}`}
+                  >
+                    {isChecking ? <RefreshCw size={12} className="animate-spin text-stone-500" /> : isConnected ? <Wifi size={12} className="text-emerald-600" /> : <WifiOff size={12} className="text-red-600" />}
+                    <span className="font-semibold">{dev.name}</span>
+                    <span className="text-stone-500">{isChecking ? 'Checking' : isConnected ? 'Connected' : 'Offline'}</span>
+                  </Button>
+                );
+              })}
+            </div>
+          )}
         </div>
       </header>
 
-      <main className="max-w-5xl mx-auto p-6">
+      <main className="max-w-6xl mx-auto p-4 md:p-6">
+        {loading && (
+          <div className="mb-4 text-xs text-stone-500 flex items-center gap-2">
+            <RefreshCw size={12} className="animate-spin" />
+            Refreshing data
+          </div>
+        )}
         {error && (
             <div className="mb-6 p-4 bg-red-50 text-red-700 rounded-lg flex items-center gap-2">
                 <XCircle size={18} />
@@ -823,7 +898,7 @@ export default function App() {
           <div className="space-y-6">
             <div className="flex justify-between items-center">
               <h2 className="text-2xl font-bold">Documents</h2>
-              <button 
+              <Button
                 onClick={() => {
                     setEditingDoc(null);
                     setDocForm({
@@ -837,17 +912,17 @@ export default function App() {
                     });
                     setShowDocForm(true);
                 }}
-                className="rm-button-primary flex items-center px-4 py-2 bg-stone-900 text-white rounded-lg hover:bg-stone-800"
+                className="gap-2"
               >
-                <Plus size={18} className="mr-2" />
+                <Plus size={18} />
                 Add Document
-              </button>
+              </Button>
             </div>
 
             {documents.length === 0 ? (
-                <div className="rm-card text-center py-12 text-stone-500 bg-white rounded-2xl border border-stone-200">
+                <Card className="text-center py-12 text-stone-500">
                     No documents found. Create one to get started.
-                </div>
+                </Card>
             ) : (
                 <div className="grid gap-4">
                     {documents.map(doc => {
@@ -857,7 +932,7 @@ export default function App() {
                         const rawProgress = typeof doc.sync_progress === 'number' ? doc.sync_progress : (isSyncing ? 10 : 0);
                         const progress = Math.max(0, Math.min(100, Math.round(rawProgress)));
                         return (
-                        <div key={doc.id} className="rm-card bg-white p-6 rounded-2xl border border-stone-200 shadow-sm flex flex-col md:flex-row justify-between gap-4">
+                        <Card key={doc.id} className="p-6 flex flex-col md:flex-row justify-between gap-4">
                             <div className="flex-1">
                                 <div className="flex items-center gap-2 mb-1">
                                     <h3 className="font-bold text-lg">{doc.title}</h3>
@@ -876,12 +951,8 @@ export default function App() {
                                     {doc.last_synced_at && (
                                         <span>Last synced: {new Date(doc.last_synced_at).toLocaleString()}</span>
                                     )}
-                                    {isQueued && (
-                                        <span className="text-amber-700">Queued (waiting for backup/device lock)</span>
-                                    )}
-                                    {isPendingConnection && (
-                                        <span className="text-amber-700">Pending connection</span>
-                                    )}
+                                    {isQueued && <Badge variant="warning">Queued (waiting for backup/device lock)</Badge>}
+                                    {isPendingConnection && <Badge variant="warning">Pending connection</Badge>}
                                 </div>
                                 {(isSyncing || isQueued) && (
                                   <div className="mt-3">
@@ -889,12 +960,7 @@ export default function App() {
                                       <span>{getSyncPhaseLabel(doc.sync_phase)}</span>
                                       <span>{progress}%</span>
                                     </div>
-                                    <div className="h-2 w-full bg-stone-200 rounded-full overflow-hidden">
-                                      <div
-                                        className="h-full bg-blue-500 transition-all duration-300"
-                                        style={{ width: `${progress}%` }}
-                                      />
-                                    </div>
+                                    <Progress value={progress} />
                                   </div>
                                 )}
                                 {doc.last_error && (
@@ -902,31 +968,34 @@ export default function App() {
                                 )}
                             </div>
                             <div className="flex items-center gap-2">
-                                <button
+                                <Button
                                     onClick={() => downloadDocPdf(doc)}
-                                    className="p-2 text-stone-500 hover:text-stone-900 hover:bg-stone-100 rounded-lg"
+                                    variant="ghost"
+                                    size="icon"
                                     title="Download PDF"
                                 >
                                     <Download size={20} />
-                                </button>
-                                <button 
+                                </Button>
+                                <Button
                                     onClick={() => syncDoc(doc.id)}
                                     disabled={isSyncing}
-                                    className="p-2 text-stone-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg disabled:opacity-50"
+                                    variant="ghost"
+                                    size="icon"
                                     title="Sync Now"
                                 >
                                     <RefreshCw size={20} className={isSyncing ? 'animate-spin' : ''} />
-                                </button>
+                                </Button>
                                 {(isSyncing || isQueued) && (
-                                  <button
+                                  <Button
                                       onClick={() => cancelDocSync(doc.id)}
-                                      className="p-2 text-stone-500 hover:text-amber-700 hover:bg-amber-50 rounded-lg"
+                                      variant="ghost"
+                                      size="icon"
                                       title="Cancel Sync"
                                   >
                                       <XCircle size={20} />
-                                  </button>
+                                  </Button>
                                 )}
-                                <button 
+                                <Button
                                     onClick={() => {
                                         setEditingDoc(doc);
                                         setDocForm({
@@ -940,20 +1009,22 @@ export default function App() {
                                         });
                                         setShowDocForm(true);
                                     }}
-                                    className="p-2 text-stone-500 hover:text-stone-900 hover:bg-stone-100 rounded-lg"
+                                    variant="ghost"
+                                    size="icon"
                                     title="Edit"
                                 >
                                     <Settings size={20} />
-                                </button>
-                                <button 
+                                </Button>
+                                <Button
                                     onClick={() => deleteDoc(doc.id)}
-                                    className="p-2 text-stone-500 hover:text-red-600 hover:bg-red-50 rounded-lg"
+                                    variant="ghost"
+                                    size="icon"
                                     title="Delete"
                                 >
                                     <Trash2 size={20} />
-                                </button>
+                                </Button>
                             </div>
-                        </div>
+                        </Card>
                     )})}
                 </div>
             )}
@@ -964,7 +1035,7 @@ export default function App() {
           <div className="space-y-6">
             <div className="flex justify-between items-center">
               <h2 className="text-2xl font-bold">Devices</h2>
-              <button 
+              <Button
                 onClick={() => {
                     setEditingDevice(null);
                     setDeviceForm({
@@ -980,11 +1051,11 @@ export default function App() {
                     });
                     setShowDeviceForm(true);
                 }}
-                className="rm-button-primary flex items-center px-4 py-2 bg-stone-900 text-white rounded-lg hover:bg-stone-800"
+                className="gap-2"
               >
-                <Plus size={18} className="mr-2" />
+                <Plus size={18} />
                 Add Device
-              </button>
+              </Button>
             </div>
 
             <div className="grid gap-4">
@@ -1000,53 +1071,47 @@ export default function App() {
                     const syncErrored = docsForDevice.some((d) => d.sync_status === 'error');
                     const connectionState = deviceStatus[dev.id] || 'disconnected';
                     return (
-                    <div key={dev.id} className="rm-card bg-white p-5 md:p-6 rounded-2xl border border-stone-200 shadow-sm flex flex-col lg:flex-row justify-between items-start gap-4">
+                    <Card key={dev.id} className="p-5 md:p-6 flex flex-col lg:flex-row justify-between items-start gap-4">
                         <div className="flex-1 min-w-0">
                             <div className="flex flex-wrap items-center gap-2">
                                 <Tablet size={18} />
                                 <h3 className="font-bold">{dev.name}</h3>
-                                <span className={`inline-flex items-center gap-1 px-2 py-0.5 text-xs rounded-full border ${
-                                  connectionState === 'connected'
-                                    ? 'bg-green-50 border-green-200 text-green-700'
-                                    : connectionState === 'checking'
-                                      ? 'bg-stone-50 border-stone-300 text-stone-600'
-                                      : 'bg-red-50 border-red-200 text-red-700'
-                                }`}>
+                                <Badge variant={connectionState === 'connected' ? 'success' : connectionState === 'checking' ? 'default' : 'destructive'} className="gap-1">
                                   {connectionState === 'connected' && <Wifi size={12} />}
                                   {connectionState === 'disconnected' && <WifiOff size={12} />}
                                   {connectionState === 'checking' && <RefreshCw size={12} className="animate-spin" />}
                                   {connectionState === 'connected' ? 'Connected' : connectionState === 'checking' ? 'Checking' : 'Offline'}
-                                </span>
+                                </Badge>
                             </div>
                             <p className="text-sm text-stone-500 font-mono mt-1 break-all">{dev.username}@{dev.host}:{dev.port}</p>
                             {diagnostics && (
                               <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
-                                <span className={`px-2 py-0.5 rounded-full border ${diagnostics.will_use_rsync ? 'bg-green-50 border-green-200 text-green-700' : 'bg-amber-50 border-amber-200 text-amber-700'}`}>
+                                <Badge variant={diagnostics.will_use_rsync ? 'success' : 'warning'}>
                                   Transfer: {diagnostics.expected_transfer_method.toUpperCase()}
-                                </span>
-                                <span className={`px-2 py-0.5 rounded-full border ${diagnostics.effective_auth === 'key' ? 'bg-green-50 border-green-200 text-green-700' : diagnostics.effective_auth === 'password' ? 'bg-amber-50 border-amber-200 text-amber-700' : 'bg-red-50 border-red-200 text-red-700'}`}>
+                                </Badge>
+                                <Badge variant={diagnostics.effective_auth === 'key' ? 'success' : diagnostics.effective_auth === 'password' ? 'warning' : 'destructive'}>
                                   Effective Auth: {diagnostics.effective_auth}
-                                </span>
-                                <span className="px-2 py-0.5 rounded-full border bg-stone-50 border-stone-200 text-stone-700">
+                                </Badge>
+                                <Badge>
                                   Key Source: {diagnostics.has_fs_private_key ? 'filesystem' : diagnostics.has_db_private_key ? 'database' : 'none'}
-                                </span>
+                                </Badge>
                               </div>
                             )}
                             {diagnostics && (
                               <p className="text-[11px] text-stone-500 mt-1">{diagnostics.reason}</p>
                             )}
                             <div className="mt-3 flex items-center gap-2 text-xs">
-                              <span className={`px-2 py-0.5 rounded-full border ${dev.auth_mode === 'key' ? 'bg-green-50 border-green-200 text-green-700' : 'bg-amber-50 border-amber-200 text-amber-700'}`}>
+                              <Badge variant={dev.auth_mode === 'key' ? 'success' : 'warning'}>
                                 Auth: {dev.auth_mode === 'key' ? 'SSH key' : 'Password'}
-                              </span>
+                              </Badge>
                               {dev.auth_mode !== 'key' && (
-                                <button
+                                <Button
                                   onClick={() => enrollDeviceKey(dev.id)}
                                   disabled={keyEnrolling}
-                                  className="px-2 py-0.5 rounded-full bg-stone-900 text-white hover:bg-stone-800 disabled:opacity-60"
+                                  size="sm"
                                 >
                                   {keyEnrolling ? 'Enrolling key…' : 'Enable fast backup (SSH key)'}
-                                </button>
+                                </Button>
                               )}
                             </div>
                             <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
@@ -1059,27 +1124,27 @@ export default function App() {
                                 <span>Backup: {backupRunning ? (backupCancelling ? 'Cancelling…' : 'Running') : latestBackup?.status || (dev.backup_enabled ? `Every ${dev.backup_frequency_hours}h` : 'Disabled')}</span>
                                 <span className="opacity-70">• Last: {formatDateTime(dev.last_backup_at)}</span>
                               </div>
-                              <button
+                              <Button
                                 onClick={() => runDeviceBackup(dev.id)}
                                 disabled={backupRunning}
-                                className="px-3 py-1 text-xs rounded-full bg-stone-900 text-white hover:bg-stone-800 disabled:opacity-60 whitespace-nowrap"
+                                size="sm"
+                                className="whitespace-nowrap"
                               >
                                 {backupRunning ? 'Backing up…' : 'Run Backup Now'}
-                              </button>
+                              </Button>
                               {backupRunning && latestBackup && (
-                                <button
+                                <Button
                                   onClick={() => cancelDeviceBackup(latestBackup.id)}
                                   disabled={backupCancelling}
-                                  className="px-3 py-1 text-xs rounded-full bg-red-600 text-white hover:bg-red-500 disabled:opacity-60"
+                                  size="sm"
+                                  variant="destructive"
                                 >
                                   {backupCancelling ? 'Cancelling…' : 'Cancel Backup'}
-                                </button>
+                                </Button>
                               )}
                               {backupRunning && latestProgress && (
                                 <div className="w-full mt-2 p-2 rounded border border-blue-200 bg-blue-50">
-                                  <div className="h-2 bg-blue-100 rounded overflow-hidden">
-                                    <div className="h-2 bg-blue-500" style={{ width: `${Math.max(0, Math.min(100, latestProgress.percent || 0))}%` }} />
-                                  </div>
+                                  <Progress value={latestProgress.percent || 0} className="bg-blue-100" />
                                   <p className="text-[11px] text-blue-700 mt-1">
                                     {latestProgress.phase} • {latestProgress.percent || 0}% • {(latestProgress.speedBytesPerSec ? (latestProgress.speedBytesPerSec / (1024 * 1024)).toFixed(2) : '0.00')} MB/s
                                     {latestProgress.message ? ` • ${latestProgress.message}` : ''}
@@ -1090,7 +1155,7 @@ export default function App() {
                             <p className="text-xs text-stone-400 mt-2">Last connected: {new Date(dev.last_connected_at).toLocaleString()}</p>
                         </div>
                         <div className="flex gap-2 self-end lg:self-start shrink-0">
-                            <button 
+                            <Button
                                 onClick={() => {
                                     setEditingDevice(dev);
                                     setDeviceForm({
@@ -1106,18 +1171,20 @@ export default function App() {
                                     }); // Don't show password
                                     setShowDeviceForm(true);
                                 }}
-                                className="p-2 text-stone-500 hover:text-stone-900 hover:bg-stone-100 rounded-lg"
+                                variant="ghost"
+                                size="icon"
                             >
                                 <Settings size={20} />
-                            </button>
-                            <button 
+                            </Button>
+                            <Button
                                 onClick={() => deleteDevice(dev.id)}
-                                className="p-2 text-stone-500 hover:text-red-600 hover:bg-red-50 rounded-lg"
+                                variant="ghost"
+                                size="icon"
                             >
                                 <Trash2 size={20} />
-                            </button>
+                            </Button>
                         </div>
-                    </div>
+                    </Card>
                 )})}
             </div>
 
@@ -1167,28 +1234,29 @@ export default function App() {
             <div className="flex justify-between items-center">
               <h2 className="text-2xl font-bold">Calendars</h2>
               <div className="flex items-center gap-2">
-                <button 
+                <Button
                   onClick={() => {
                       setEditingAccount(null);
                       setAccountForm({ name: '', url: '', username: '', password: '', selected_calendars: [] });
                       setShowAccountForm(true);
                   }}
-                  className="rm-button-primary flex items-center px-4 py-2 bg-stone-900 text-white rounded-lg hover:bg-stone-800"
+                  className="gap-2"
                 >
-                  <Plus size={18} className="mr-2" />
+                  <Plus size={18} />
                   Add CalDAV
-                </button>
-                <button
+                </Button>
+                <Button
                   onClick={() => {
                     setEditingSubscription(null);
                     setSubscriptionForm({ name: '', url: '', owner_email: '', update_frequency_minutes: 30, enabled: true });
                     setShowSubscriptionForm(true);
                   }}
-                  className="rm-button-secondary flex items-center px-4 py-2 bg-stone-800 text-white rounded-lg hover:bg-stone-700"
+                  variant="secondary"
+                  className="gap-2"
                 >
-                  <Plus size={18} className="mr-2" />
+                  <Plus size={18} />
                   Add Subscription
-                </button>
+                </Button>
               </div>
             </div>
 
@@ -1196,10 +1264,10 @@ export default function App() {
 
             <div className="grid gap-4">
                 {accounts.map(acc => {
-                    const selected = JSON.parse(acc.selected_calendars || '[]');
+                    const selected = safeParseJsonArray<{url: string, name: string}>(acc.selected_calendars, []);
                     const testStatus = accountTestStatus[acc.id];
                     return (
-                        <div key={acc.id} className="rm-card bg-white p-6 rounded-2xl border border-stone-200 shadow-sm flex justify-between items-center">
+                        <Card key={acc.id} className="p-6 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
                             <div>
                                 <h3 className="font-bold">{acc.name}</h3>
                                 <p className="text-sm text-stone-500">{acc.url}</p>
@@ -1210,14 +1278,15 @@ export default function App() {
                                 )}
                                 {testStatus?.state === 'error' && <p className="text-xs text-red-600 mt-1">✕ {testStatus.message}</p>}
                             </div>
-                            <div className="flex gap-2">
-                                <button 
+                            <div className="flex gap-2 self-end md:self-auto">
+                                <Button
                                     onClick={() => testAccount(acc.id)}
-                                    className="px-3 py-2 text-xs text-stone-700 bg-stone-100 hover:bg-stone-200 rounded-lg"
+                                    size="sm"
+                                    variant="secondary"
                                 >
                                     {testStatus?.state === 'running' ? 'Testing…' : 'Test'}
-                                </button>
-                                <button 
+                                </Button>
+                                <Button
                                     onClick={() => {
                                         setEditingAccount(acc);
                                         setAccountForm({ 
@@ -1229,18 +1298,20 @@ export default function App() {
                                         });
                                         setShowAccountForm(true);
                                     }}
-                                    className="p-2 text-stone-500 hover:text-stone-900 hover:bg-stone-100 rounded-lg"
+                                    variant="ghost"
+                                    size="icon"
                                 >
                                     <Settings size={20} />
-                                </button>
-                                <button 
+                                </Button>
+                                <Button
                                     onClick={() => deleteAccount(acc.id)}
-                                    className="p-2 text-stone-500 hover:text-red-600 hover:bg-red-50 rounded-lg"
+                                    variant="ghost"
+                                    size="icon"
                                 >
                                     <Trash2 size={20} />
-                                </button>
+                                </Button>
                             </div>
-                        </div>
+                        </Card>
                     );
                 })}
             </div>
@@ -1248,14 +1319,14 @@ export default function App() {
             <h3 className="text-lg font-semibold text-stone-700 pt-2">Subscriptions</h3>
             <div className="grid gap-4">
               {subscriptions.length === 0 ? (
-                <div className="rm-card bg-white p-6 rounded-2xl border border-stone-200 text-sm text-stone-500">
+                <Card className="p-6 text-sm text-stone-500">
                   No subscriptions yet.
-                </div>
+                </Card>
               ) : (
                 subscriptions.map(sub => {
                   const syncStatus = subscriptionFetchStatus[sub.id];
                   return (
-                  <div key={sub.id} className="rm-card bg-white p-6 rounded-2xl border border-stone-200 shadow-sm flex justify-between items-center">
+                  <Card key={sub.id} className="p-6 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
                     <div>
                       <h3 className="font-bold">{sub.name}</h3>
                       {sub.owner_email && <p className="text-xs text-stone-400">Owner: {sub.owner_email}</p>}
@@ -1270,14 +1341,15 @@ export default function App() {
                       )}
                       {syncStatus?.state === 'error' && <p className="text-xs text-red-600 mt-1">✕ {syncStatus.message}</p>}
                     </div>
-                    <div className="flex gap-2">
-                      <button
+                    <div className="flex gap-2 self-end md:self-auto">
+                      <Button
                         onClick={() => fetchSubscriptionNow(sub.id)}
-                        className="px-3 py-2 text-xs text-stone-700 bg-stone-100 hover:bg-stone-200 rounded-lg"
+                        size="sm"
+                        variant="secondary"
                       >
                         {syncStatus?.state === 'running' ? 'Fetching…' : 'Fetch now'}
-                      </button>
-                      <button
+                      </Button>
+                      <Button
                         onClick={() => {
                           setEditingSubscription(sub);
                           setSubscriptionForm({
@@ -1289,18 +1361,20 @@ export default function App() {
                           });
                           setShowSubscriptionForm(true);
                         }}
-                        className="p-2 text-stone-500 hover:text-stone-900 hover:bg-stone-100 rounded-lg"
+                        variant="ghost"
+                        size="icon"
                       >
                         <Settings size={20} />
-                      </button>
-                      <button
+                      </Button>
+                      <Button
                         onClick={() => deleteSubscription(sub.id)}
-                        className="p-2 text-stone-500 hover:text-red-600 hover:bg-red-50 rounded-lg"
+                        variant="ghost"
+                        size="icon"
                       >
                         <Trash2 size={20} />
-                      </button>
+                      </Button>
                     </div>
-                  </div>
+                  </Card>
                 )})
               )}
             </div>
@@ -1310,9 +1384,20 @@ export default function App() {
 
       {/* Document Modal */}
       {showDocForm && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 overflow-y-auto">
-            <div className="bg-white rounded-2xl p-8 max-w-md w-full shadow-xl max-h-[calc(100vh-2rem)] overflow-y-auto">
-                <h3 className="text-xl font-bold mb-4">{editingDoc ? 'Edit Document' : 'New Document'}</h3>
+        <div
+            className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 overflow-y-auto"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="document-modal-title"
+            onMouseDown={(e) => { if (e.target === e.currentTarget) setShowDocForm(false); }}
+        >
+            <div
+                ref={docModalRef}
+                className="bg-white rounded-2xl p-8 max-w-md w-full shadow-xl max-h-[calc(100vh-2rem)] overflow-y-auto"
+                onMouseDown={(e) => e.stopPropagation()}
+                onKeyDown={(e) => trapFocusWithin(e, docModalRef.current)}
+            >
+                <h3 id="document-modal-title" className="text-xl font-bold mb-4">{editingDoc ? 'Edit Document' : 'New Document'}</h3>
                 {modalError && (
                     <div className="mb-4 p-3 bg-red-50 text-red-700 rounded-lg text-sm flex items-center gap-2">
                         <XCircle size={16} />
@@ -1452,9 +1537,20 @@ export default function App() {
 
       {/* Device Modal */}
       {showDeviceForm && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 overflow-y-auto">
-            <div className="bg-white rounded-2xl p-8 max-w-md w-full shadow-xl max-h-[calc(100vh-2rem)] overflow-y-auto">
-                <h3 className="text-xl font-bold mb-4">{editingDevice ? 'Edit Device' : 'New Device'}</h3>
+        <div
+            className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 overflow-y-auto"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="device-modal-title"
+            onMouseDown={(e) => { if (e.target === e.currentTarget) setShowDeviceForm(false); }}
+        >
+            <div
+                ref={deviceModalRef}
+                className="bg-white rounded-2xl p-8 max-w-md w-full shadow-xl max-h-[calc(100vh-2rem)] overflow-y-auto"
+                onMouseDown={(e) => e.stopPropagation()}
+                onKeyDown={(e) => trapFocusWithin(e, deviceModalRef.current)}
+            >
+                <h3 id="device-modal-title" className="text-xl font-bold mb-4">{editingDevice ? 'Edit Device' : 'New Device'}</h3>
                 {modalError && (
                     <div className="mb-4 p-3 bg-red-50 text-red-700 rounded-lg text-sm flex items-center gap-2">
                         <XCircle size={16} />
@@ -1606,9 +1702,20 @@ export default function App() {
 
       {/* Account Modal */}
       {showAccountForm && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 overflow-y-auto">
-            <div className="bg-white rounded-2xl p-8 max-w-md w-full shadow-xl max-h-[calc(100vh-2rem)] overflow-y-auto">
-                <h3 className="text-xl font-bold mb-4">{editingAccount ? 'Edit Account' : 'New Account'}</h3>
+        <div
+            className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 overflow-y-auto"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="account-modal-title"
+            onMouseDown={(e) => { if (e.target === e.currentTarget) setShowAccountForm(false); }}
+        >
+            <div
+                ref={accountModalRef}
+                className="bg-white rounded-2xl p-8 max-w-md w-full shadow-xl max-h-[calc(100vh-2rem)] overflow-y-auto"
+                onMouseDown={(e) => e.stopPropagation()}
+                onKeyDown={(e) => trapFocusWithin(e, accountModalRef.current)}
+            >
+                <h3 id="account-modal-title" className="text-xl font-bold mb-4">{editingAccount ? 'Edit Account' : 'New Account'}</h3>
                 {modalError && (
                     <div className="mb-4 p-3 bg-red-50 text-red-700 rounded-lg text-sm flex items-center gap-2">
                         <XCircle size={16} />
@@ -1754,9 +1861,20 @@ export default function App() {
 
       {/* Subscription Modal */}
       {showSubscriptionForm && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 overflow-y-auto">
-          <div className="bg-white rounded-2xl p-8 max-w-md w-full shadow-xl max-h-[calc(100vh-2rem)] overflow-y-auto">
-            <h3 className="text-xl font-bold mb-4">{editingSubscription ? 'Edit Subscription' : 'New Subscription'}</h3>
+        <div
+          className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 overflow-y-auto"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="subscription-modal-title"
+          onMouseDown={(e) => { if (e.target === e.currentTarget) setShowSubscriptionForm(false); }}
+        >
+          <div
+            ref={subscriptionModalRef}
+            className="bg-white rounded-2xl p-8 max-w-md w-full shadow-xl max-h-[calc(100vh-2rem)] overflow-y-auto"
+            onMouseDown={(e) => e.stopPropagation()}
+            onKeyDown={(e) => trapFocusWithin(e, subscriptionModalRef.current)}
+          >
+            <h3 id="subscription-modal-title" className="text-xl font-bold mb-4">{editingSubscription ? 'Edit Subscription' : 'New Subscription'}</h3>
             {modalError && (
               <div className="mb-4 p-3 bg-red-50 text-red-700 rounded-lg text-sm flex items-center gap-2">
                 <XCircle size={16} />
@@ -1838,6 +1956,66 @@ export default function App() {
               </div>
             </form>
           </div>
+        </div>
+      )}
+
+      {confirmState.open && (
+        <div
+          className="fixed inset-0 z-[60] bg-black/40 p-4 flex items-center justify-center"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="confirm-title"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) closeConfirm();
+          }}
+        >
+          <Card className="w-full max-w-md" onMouseDown={(e) => e.stopPropagation()}>
+            <CardContent className="p-6 space-y-4">
+              <h3 id="confirm-title" className="text-lg font-semibold">{confirmState.title}</h3>
+              <p className="text-sm text-stone-600">{confirmState.description}</p>
+              <div className="flex justify-end gap-2">
+                <Button variant="secondary" onClick={closeConfirm} disabled={confirmSubmitting}>Cancel</Button>
+                <Button
+                  variant="destructive"
+                  disabled={confirmSubmitting}
+                  onClick={async () => {
+                    if (!confirmState.onConfirm) return;
+                    setConfirmSubmitting(true);
+                    try {
+                      await confirmState.onConfirm();
+                      closeConfirm();
+                    } catch (err: any) {
+                      pushToast('error', err?.response?.data?.error || err?.message || 'Action failed');
+                    } finally {
+                      setConfirmSubmitting(false);
+                    }
+                  }}
+                >
+                  {confirmSubmitting ? 'Working…' : 'Confirm'}
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {toasts.length > 0 && (
+        <div className="fixed bottom-4 right-4 z-[70] flex w-[min(360px,calc(100vw-2rem))] flex-col gap-2">
+          {toasts.map((toast) => (
+            <div
+              key={toast.id}
+              className={cn(
+                'rounded-xl border px-4 py-3 text-sm shadow-md backdrop-blur',
+                toast.kind === 'error'
+                  ? 'border-red-200 bg-red-50/95 text-red-700'
+                  : toast.kind === 'success'
+                    ? 'border-emerald-200 bg-emerald-50/95 text-emerald-700'
+                    : 'border-stone-200 bg-white/95 text-stone-700',
+              )}
+            >
+              {toast.message}
+            </div>
+          ))}
         </div>
       )}
       </>

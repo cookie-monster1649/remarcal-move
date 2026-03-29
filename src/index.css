@@ -1,103 +1,121 @@
 @import "tailwindcss";
 
-/* reMarkable-inspired minimalist paper styling (minor facelift only) */
+/* reMarkable-inspired premium editorial styling */
 .remarkable-ui {
-  background: #ece7de;
-  color: #1a1a1a;
-  font-family: "Inter", "Avenir Next", "Segoe UI", sans-serif;
+  --rm-bg: #ece7de;
+  --rm-panel: #f6f2ea;
+  --rm-panel-elev: #fbf9f4;
+  --rm-border: #cfcac2;
+  --rm-ink: #191714;
+  --rm-muted: #6b655f;
+  background:
+    radial-gradient(circle at 10% 0%, rgba(255, 255, 255, 0.45), transparent 28%),
+    radial-gradient(circle at 100% 100%, rgba(214, 204, 187, 0.35), transparent 30%),
+    var(--rm-bg);
+  color: var(--rm-ink);
+  font-family: "Avenir Next", "Segoe UI Variable", "Helvetica Neue", "Trebuchet MS", sans-serif;
+  letter-spacing: 0.005em;
 }
 
 .remarkable-ui .remarkable-header {
-  background: #efeae2;
-  border-bottom-color: #cfcac2;
+  background: color-mix(in srgb, var(--rm-panel) 70%, #fff 30%);
+  border-bottom-color: var(--rm-border);
   box-shadow: none;
 }
 
 .remarkable-ui .rm-brand-mark {
   background: transparent;
-  color: #1a1a1a;
-  border: 1px solid #1f1b18;
-  border-radius: 0.25rem;
+  color: var(--rm-ink);
+  border: 1px solid color-mix(in srgb, var(--rm-ink) 88%, white 12%);
+  border-radius: 0.5rem;
 }
 
 .remarkable-ui .rm-brand-title {
-  color: #1f1b18;
-  font-family: "Iowan Old Style", "Palatino Linotype", "Times New Roman", serif;
+  color: var(--rm-ink);
+  font-family: "Canela", "Iowan Old Style", "Palatino Linotype", "Book Antiqua", serif;
   font-weight: 500;
-  letter-spacing: 0.01em;
+  letter-spacing: 0.02em;
 }
 
 .remarkable-ui .rm-card {
-  background: #f2ede5;
-  border-color: #cfcac2;
-  border-radius: 0.2rem;
+  background: var(--rm-panel-elev);
+  border-color: var(--rm-border);
+  border-radius: 0.9rem;
   box-shadow: none;
 }
 
 .remarkable-ui .rm-card:hover {
-  background: #f4efe7;
+  background: color-mix(in srgb, var(--rm-panel-elev) 85%, white 15%);
 }
 
 .remarkable-ui .rm-button-primary {
   background: transparent;
-  color: #1a1a1a;
+  color: var(--rm-ink);
   border: 1px solid transparent;
   box-shadow: none;
 }
 
 .remarkable-ui .rm-button-primary:hover {
-  background: #e8e3d9;
-  color: #1a1a1a;
+  background: color-mix(in srgb, var(--rm-panel) 85%, white 15%);
+  color: var(--rm-ink);
 }
 
 .remarkable-ui .rm-button-secondary {
   background: transparent;
   border: 1px solid transparent;
-  color: #4b4b4b;
+  color: var(--rm-muted);
   box-shadow: none;
 }
 
 .remarkable-ui .rm-button-secondary:hover {
-  background: #e8e3d9;
-  color: #1a1a1a;
+  background: color-mix(in srgb, var(--rm-panel) 85%, white 15%);
+  color: var(--rm-ink);
 }
 
 .remarkable-ui .rm-nav-button {
   border: 1px solid transparent;
   background: transparent;
-  color: #5a5a5a;
-  border-radius: 0.2rem;
+  color: var(--rm-muted);
+  border-radius: 0.5rem;
 }
 
 .remarkable-ui .rm-nav-button.rm-nav-active {
-  background: #e8e3d9;
-  color: #1a1a1a;
-  border-color: #cfcac2;
+  background: color-mix(in srgb, var(--rm-panel) 84%, #fff 16%);
+  color: var(--rm-ink);
+  border-color: var(--rm-border);
 }
 
 .remarkable-ui .rm-nav-button:not(.rm-nav-active) {
   background: transparent;
-  color: #6b6b6b;
+  color: var(--rm-muted);
   border-color: transparent;
 }
 
 .remarkable-ui .rm-nav-button:not(.rm-nav-active):hover {
-  background: #e8e3d9;
-  color: #1a1a1a;
+  background: color-mix(in srgb, var(--rm-panel) 84%, #fff 16%);
+  color: var(--rm-ink);
 }
 
 .remarkable-ui .text-stone-500,
 .remarkable-ui .text-stone-400,
 .remarkable-ui .text-stone-600 {
-  color: #6b6b6b !important;
+  color: var(--rm-muted) !important;
 }
 
 .remarkable-ui .text-stone-900,
 .remarkable-ui .text-stone-700 {
-  color: #1a1a1a !important;
+  color: var(--rm-ink) !important;
 }
 
 .remarkable-ui .border-stone-200,
 .remarkable-ui .border-stone-100 {
-  border-color: #cfcac2 !important;
+  border-color: var(--rm-border) !important;
+}
+
+.remarkable-ui button:focus-visible,
+.remarkable-ui input:focus-visible,
+.remarkable-ui select:focus-visible,
+.remarkable-ui textarea:focus-visible {
+  outline: 2px solid #2f2b27;
+  outline-offset: 2px;
 }
