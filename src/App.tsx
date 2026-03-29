@@ -11,7 +11,7 @@ interface Document {
   type: string;
   remote_path: string;
   last_synced_at: string;
-  sync_status: 'idle' | 'checking' | 'queued' | 'syncing' | 'error';
+  sync_status: 'idle' | 'checking' | 'queued' | 'pending_connection' | 'syncing' | 'error';
   sync_phase?: 'idle' | 'queued' | 'preparing' | 'generating_pdf' | 'uploading' | 'finalizing' | 'done' | 'cancelled' | 'error';
   sync_progress?: number;
   last_error: string;
@@ -853,6 +853,7 @@ export default function App() {
                     {documents.map(doc => {
                         const isSyncing = doc.sync_status === 'syncing' || !!manualSyncStatus[doc.id];
                         const isQueued = doc.sync_status === 'queued';
+                        const isPendingConnection = doc.sync_status === 'pending_connection';
                         const rawProgress = typeof doc.sync_progress === 'number' ? doc.sync_progress : (isSyncing ? 10 : 0);
                         const progress = Math.max(0, Math.min(100, Math.round(rawProgress)));
                         return (
@@ -862,6 +863,7 @@ export default function App() {
                                     <h3 className="font-bold text-lg">{doc.title}</h3>
                                     {isSyncing && <RefreshCw size={14} className="animate-spin text-blue-500" />}
                                     {isQueued && <Clock size={14} className="text-amber-600" />}
+                                    {isPendingConnection && <Clock size={14} className="text-amber-700" />}
                                     {doc.sync_status === 'error' && <XCircle size={14} className="text-red-500" />}
                                     {!isSyncing && doc.sync_status === 'idle' && doc.last_synced_at && <CheckCircle size={14} className="text-green-500" />}
                                 </div>
@@ -876,6 +878,9 @@ export default function App() {
                                     )}
                                     {isQueued && (
                                         <span className="text-amber-700">Queued (waiting for backup/device lock)</span>
+                                    )}
+                                    {isPendingConnection && (
+                                        <span className="text-amber-700">Pending connection</span>
                                     )}
                                 </div>
                                 {(isSyncing || isQueued) && (
@@ -1533,7 +1538,7 @@ export default function App() {
                         />
                         <label htmlFor="sync_when_connected" className="text-sm font-medium">Sync when connected</label>
                     </div>
-                    <p className="text-xs text-stone-500">Checks every 2 minutes and syncs linked documents when this device is reachable.</p>
+                    <p className="text-xs text-stone-500">Checks connection every 2 minutes. Auto-sync runs only if the last successful sync is at least 1 hour old.</p>
                     </div>
 
                     <div className="p-3 rounded-lg border border-stone-200 bg-stone-50">

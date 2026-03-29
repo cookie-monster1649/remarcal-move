@@ -79,7 +79,7 @@ export function initDb() {
       type TEXT DEFAULT 'pdf',
       remote_path TEXT,
       last_synced_at TEXT,
-      sync_status TEXT DEFAULT 'idle', -- idle, checking, queued, syncing, error
+      sync_status TEXT DEFAULT 'idle', -- idle, checking, queued, pending_connection, syncing, error
       sync_phase TEXT DEFAULT 'idle',
       sync_progress INTEGER DEFAULT 0,
       last_error TEXT,

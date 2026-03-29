@@ -27,6 +27,8 @@ type SyncPhase =
   | 'cancelled'
   | 'error';
 
+const DEVICE_CONNECTIVITY_TIMEOUT_MS = 12_000;
+
 function getSyncTimeoutMs(): number {
   const raw = Number(process.env.SYNC_OPERATION_TIMEOUT_MS || DEFAULT_SYNC_OPERATION_TIMEOUT_MS);
   if (!Number.isFinite(raw) || raw < 30_000) {
@@ -124,6 +126,24 @@ export class SyncService {
       lastUpdateAt = now;
       this.setSyncState(docId, { status: 'syncing', phase: 'uploading', progress: overall, error: null });
     };
+  }
+
+  private async isDeviceConnected(device: any): Promise<boolean> {
+    try {
+      const testConfig = {
+        ...buildDeviceSshConfig(device),
+        readyTimeout: 5000,
+      };
+      const service = new SSHService(testConfig);
+      await withTimeout(
+        service.testConnection(),
+        DEVICE_CONNECTIVITY_TIMEOUT_MS,
+        'Device connectivity check timed out',
+      );
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   cancelSync(docId: string): boolean {
@@ -373,13 +393,22 @@ export class SyncService {
         throw err;
       }
 
-      // Update status to syncing
-      this.setSyncState(docId, { status: 'syncing', phase: 'preparing', progress: 5, error: null });
-      infoLogService.write('sync.started', { docId, deviceId: device.id, remotePath: doc.remote_path });
+      // Start with connectivity verification before doing expensive sync work.
+      this.setSyncState(docId, { status: 'checking', phase: 'preparing', progress: 2, error: null });
       activeSyncByDoc.add(docId);
 
       try {
         ensureNotCancelled(docId);
+        const connected = await this.isDeviceConnected(device);
+        if (!connected) {
+          const pendingErr: any = new Error('Pending connection');
+          pendingErr.syncPendingConnection = true;
+          pendingErr.syncSkipped = true;
+          throw pendingErr;
+        }
+
+        this.setSyncState(docId, { status: 'syncing', phase: 'preparing', progress: 5, error: null });
+        infoLogService.write('sync.started', { docId, deviceId: device.id, remotePath: doc.remote_path });
         this.setSyncState(docId, { status: 'syncing', phase: 'generating_pdf', progress: 25, error: null });
 
         const { localPath } = await withTimeout(
@@ -426,9 +455,13 @@ export class SyncService {
       console.error(`Sync failed for doc ${docId}:`, error);
       const message = error?.message || 'Unknown sync error';
       const cancelled = !!error?.syncCancelled || String(message).toLowerCase().includes('cancel');
+      const pendingConnection = !!error?.syncPendingConnection || String(message).toLowerCase().includes('pending connection');
       if (cancelled) {
         this.setSyncState(docId, { status: 'idle', phase: 'cancelled', progress: 0, error: 'Sync cancelled by user' });
         infoLogService.write('sync.cancelled', { docId }, 'warn');
+      } else if (pendingConnection) {
+        this.setSyncState(docId, { status: 'pending_connection', phase: 'queued', progress: 0, error: null });
+        infoLogService.write('sync.pending_connection', { docId, deviceId: doc.device_id }, 'warn');
       } else {
         this.setSyncState(docId, { status: 'error', phase: 'error', progress: 0, error: message });
       }

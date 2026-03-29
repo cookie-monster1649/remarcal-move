@@ -6,6 +6,7 @@ import { SyncService } from './syncService.js';
 import { backupService } from './backupService.js';
 
 const POLL_INTERVAL_MS = 2 * 60 * 1000;
+const AUTO_SYNC_MIN_INTERVAL_MS = 60 * 60 * 1000;
 
 function buildDeviceSshConfig(device: any) {
   const fsPrivateKey = sshKeyManager.loadDevicePrivateKey(device.id);
@@ -76,11 +77,14 @@ export class ConnectionSyncService {
 
         if (device.sync_when_connected) {
           const docs = db
-            .prepare('SELECT id, sync_status FROM documents WHERE device_id = ?')
+            .prepare('SELECT id, sync_status, last_synced_at FROM documents WHERE device_id = ?')
             .all(device.id) as any[];
 
           for (const doc of docs) {
             if (doc.sync_status === 'syncing') {
+              continue;
+            }
+            if (!this.isAutoSyncDue(doc.last_synced_at)) {
               continue;
             }
 
@@ -113,6 +117,13 @@ export class ConnectionSyncService {
     } catch {
       return false;
     }
+  }
+
+  private isAutoSyncDue(lastSyncedAt?: string | null): boolean {
+    if (!lastSyncedAt) return true;
+    const lastMs = new Date(lastSyncedAt).getTime();
+    if (!Number.isFinite(lastMs)) return true;
+    return Date.now() - lastMs >= AUTO_SYNC_MIN_INTERVAL_MS;
   }
 }
 
