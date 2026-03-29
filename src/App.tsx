@@ -133,6 +133,12 @@ const getInitialThemeMode = (): ThemeMode => {
   return stored === 'light' || stored === 'dark' || stored === 'system' ? stored : 'system';
 };
 
+const getNextThemeMode = (current: ThemeMode): ThemeMode => {
+  if (current === 'light') return 'dark';
+  if (current === 'dark') return 'system';
+  return 'light';
+};
+
 export default function App() {
   const DATA_POLL_MS = 120000;
   const DEVICE_CHECK_MS = 120000;
@@ -872,80 +878,130 @@ export default function App() {
       ) : (
       <>
       <header className="remarkable-header sticky top-0 z-20 border-b border-stone-200/80 bg-white/90 p-4 backdrop-blur">
-        <div className="max-w-6xl mx-auto space-y-3">
-          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-            <div className="flex items-center gap-3">
+        <div className="max-w-6xl mx-auto">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div className="flex min-w-0 items-center gap-3">
               <div className="rm-brand-mark w-8 h-8 bg-stone-900 text-white flex items-center justify-center rounded-lg">
                 <Calendar size={20} />
               </div>
-              <div>
+              <div className="min-w-0">
                 <h1 className="rm-brand-title text-2xl leading-none tracking-tight">remarcal-move</h1>
                 <p className="text-xs text-stone-500 mt-1">Calendar sync orchestration for reMarkable devices</p>
               </div>
+              {devices.length > 0 && (
+                <div className="hidden lg:flex flex-wrap items-center gap-2 pl-2">
+                  {devices.map((dev) => {
+                    const status = deviceStatus[dev.id] || 'disconnected';
+                    const isChecking = status === 'checking';
+                    const isConnected = status === 'connected';
+                    return (
+                      <button
+                        key={dev.id}
+                        type="button"
+                        onClick={() => checkConnectionForDevice(dev.id)}
+                        disabled={isChecking}
+                        className={cn(
+                          'inline-flex h-8 items-center gap-1.5 rounded-full border px-3 text-xs font-semibold transition-colors disabled:opacity-70',
+                          status === 'connected'
+                            ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                            : status === 'checking'
+                              ? 'border-stone-300 bg-stone-100 text-stone-600'
+                              : 'border-red-200 bg-red-50 text-red-700',
+                        )}
+                        title={`Click to test connection: ${dev.name}`}
+                      >
+                        {isChecking ? (
+                          <RefreshCw size={12} className="animate-spin" />
+                        ) : isConnected ? (
+                          <Wifi size={12} />
+                        ) : (
+                          <WifiOff size={12} />
+                        )}
+                        <span>{dev.name}</span>
+                        <span className="opacity-85">{isChecking ? 'Checking' : isConnected ? 'Connected' : 'Offline'}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
             </div>
-            <nav className="flex flex-wrap items-center gap-2">
-              <div className="mr-1 inline-flex items-center rounded-xl border border-stone-200 bg-stone-100/70 p-1">
+            <div className="flex items-center justify-between gap-2">
+              <nav className="inline-flex items-center rounded-xl border border-stone-200 bg-stone-100/70 p-1">
                 <Button
-                  onClick={() => setThemeMode('light')}
-                  variant={themeMode === 'light' ? 'default' : 'ghost'}
+                  onClick={() => setActiveTab('library')}
+                  variant={activeTab === 'library' ? 'default' : 'ghost'}
                   size="sm"
-                  className="h-7 w-7 p-0"
-                  title="Light mode"
-                  aria-label="Switch to light mode"
+                  className="rounded-lg px-4"
                 >
-                  <Sun size={13} />
+                  Library
                 </Button>
                 <Button
-                  onClick={() => setThemeMode('system')}
-                  variant={themeMode === 'system' ? 'default' : 'ghost'}
+                  onClick={() => setActiveTab('devices')}
+                  variant={activeTab === 'devices' ? 'default' : 'ghost'}
                   size="sm"
-                  className="h-7 w-7 p-0"
-                  title={`System mode (${resolvedTheme})`}
-                  aria-label="Use system theme"
+                  className="rounded-lg px-4"
                 >
-                  <Monitor size={13} />
+                  Devices
                 </Button>
                 <Button
-                  onClick={() => setThemeMode('dark')}
-                  variant={themeMode === 'dark' ? 'default' : 'ghost'}
+                  onClick={() => setActiveTab('settings')}
+                  variant={activeTab === 'settings' ? 'default' : 'ghost'}
                   size="sm"
-                  className="h-7 w-7 p-0"
-                  title="Dark mode"
-                  aria-label="Switch to dark mode"
+                  className="rounded-lg px-4"
                 >
-                  <Moon size={13} />
+                  Calendars
+                </Button>
+              </nav>
+              <div className="flex items-center gap-2">
+                <Button
+                  onClick={() => setThemeMode(getNextThemeMode(themeMode))}
+                  variant="secondary"
+                  size="icon"
+                  className="h-9 w-9 rounded-full"
+                  title={`Theme: ${themeMode} (${resolvedTheme}). Click to cycle`}
+                  aria-label="Toggle theme mode"
+                >
+                  {themeMode === 'system' ? <Monitor size={15} /> : resolvedTheme === 'dark' ? <Moon size={15} /> : <Sun size={15} />}
+                </Button>
+                <Button onClick={handleLogout} variant="ghost" size="sm" className="gap-1">
+                  <LogOut size={14} />
+                  Logout
                 </Button>
               </div>
-              <Button onClick={() => setActiveTab('library')} variant={activeTab === 'library' ? 'default' : 'secondary'} size="sm">Library</Button>
-              <Button onClick={() => setActiveTab('devices')} variant={activeTab === 'devices' ? 'default' : 'secondary'} size="sm">Devices</Button>
-              <Button onClick={() => setActiveTab('settings')} variant={activeTab === 'settings' ? 'default' : 'secondary'} size="sm">Calendars</Button>
-              <Button onClick={handleLogout} variant="ghost" size="sm" className="gap-1">
-                <LogOut size={14} />
-                Logout
-              </Button>
-            </nav>
+            </div>
           </div>
           {devices.length > 0 && (
-            <div className="flex flex-wrap items-center gap-2 text-xs">
+            <div className="mt-3 flex flex-wrap items-center gap-2 lg:hidden">
               {devices.map((dev) => {
                 const status = deviceStatus[dev.id] || 'disconnected';
                 const isChecking = status === 'checking';
                 const isConnected = status === 'connected';
                 return (
-                  <Button
+                  <button
                     key={dev.id}
                     type="button"
-                    size="sm"
-                    variant="secondary"
                     onClick={() => checkConnectionForDevice(dev.id)}
                     disabled={isChecking}
-                    className="h-8 rounded-full border-stone-300"
+                    className={cn(
+                      'inline-flex h-8 items-center gap-1.5 rounded-full border px-3 text-xs font-semibold transition-colors disabled:opacity-70',
+                      status === 'connected'
+                        ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                        : status === 'checking'
+                          ? 'border-stone-300 bg-stone-100 text-stone-600'
+                          : 'border-red-200 bg-red-50 text-red-700',
+                    )}
                     title={`Click to test connection: ${dev.name}`}
                   >
-                    {isChecking ? <RefreshCw size={12} className="animate-spin text-stone-500" /> : isConnected ? <Wifi size={12} className="text-emerald-600" /> : <WifiOff size={12} className="text-red-600" />}
-                    <span className="font-semibold">{dev.name}</span>
-                    <span className="text-stone-500">{isChecking ? 'Checking' : isConnected ? 'Connected' : 'Offline'}</span>
-                  </Button>
+                    {isChecking ? (
+                      <RefreshCw size={12} className="animate-spin" />
+                    ) : isConnected ? (
+                      <Wifi size={12} />
+                    ) : (
+                      <WifiOff size={12} />
+                    )}
+                    <span>{dev.name}</span>
+                    <span className="opacity-85">{isChecking ? 'Checking' : isConnected ? 'Connected' : 'Offline'}</span>
+                  </button>
                 );
               })}
             </div>
