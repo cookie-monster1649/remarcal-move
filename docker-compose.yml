@@ -1,9 +1,9 @@
 services:
   app:
+    image: ghcr.io/cookie-monster1649/remarcal-move:latest
     build: .
-    container_name: remarcal
+    container_name: remarcal-move
     restart: unless-stopped
-    user: "1000:1000"
     read_only: true
     security_opt:
       - no-new-privileges:true
@@ -31,6 +31,9 @@ services:
       - CAL_TRACE_DAY=${CAL_TRACE_DAY:-}
       - SYNC_DRY_RUN=${SYNC_DRY_RUN:-false}
       - SYNC_BACKUP_REMOTE=${SYNC_BACKUP_REMOTE:-true}
+      - BACKUP_RETENTION_DAYS=${BACKUP_RETENTION_DAYS:-7}
+      - BACKUP_MAX_COUNT=${BACKUP_MAX_COUNT:-5}
+      - BACKUP_MAX_TOTAL_SIZE_GB=${BACKUP_MAX_TOTAL_SIZE_GB:-5}
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/api/health"]
       interval: 30s
