@@ -1,7 +1,6 @@
 services:
   app:
     image: ghcr.io/cookie-monster1649/remarcal-move:latest
-    build: .
     container_name: remarcal-move
     restart: unless-stopped
     read_only: true
@@ -41,6 +40,3 @@ services:
       retries: 3
     extra_hosts:
        - "${CALDAV_HOSTNAME:-nas.local}:${CALDAV_HOST_IP:-192.168.1.10}"
-
-volumes:
-  remarcal_data:
