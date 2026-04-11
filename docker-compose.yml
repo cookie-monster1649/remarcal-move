@@ -2,9 +2,8 @@ services:
   app:
     image: ghcr.io/cookie-monster1649/remarcal-move:latest
     container_name: remarcal-move
-    user: "1000:1000"
+    user: 1000:100
     restart: unless-stopped
-    read_only: true
     security_opt:
       - no-new-privileges:true
     cap_drop:
