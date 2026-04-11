@@ -2,6 +2,7 @@ services:
   app:
     image: ghcr.io/cookie-monster1649/remarcal-move:latest
     container_name: remarcal-move
+    user: "1000:1000"
     restart: unless-stopped
     read_only: true
     security_opt:
@@ -15,7 +16,6 @@ services:
       - /tmp:/tmp
     environment:
       - NODE_ENV=${NODE_ENV:-production}
-      - PORT=${PORT:-3000}
       - DATA_DIR=${DATA_DIR:-/data}
       - APP_ADMIN_PASSWORD=${APP_ADMIN_PASSWORD}
       - APP_ALLOWED_ORIGIN=${APP_ALLOWED_ORIGIN}
