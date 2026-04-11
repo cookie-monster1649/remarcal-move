@@ -30,6 +30,7 @@ jobs:
       - name: Start server
         env:
           APP_MASTER_KEY: ci-test-master-key-which-is-at-least-32-chars
+          APP_ADMIN_PASSWORD: ci-test-admin-password
           DATA_DIR: ./data-ci
         run: |
           npx tsx server.ts > /tmp/remarcal-ci.log 2>&1 &
@@ -37,6 +38,10 @@ jobs:
 
       - name: Smoke healthcheck
         run: npm run smoke
+
+      - name: Dump server log
+        if: failure()
+        run: cat /tmp/remarcal-ci.log || true
 
       - name: Stop server
         if: always()
