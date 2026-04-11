@@ -34,7 +34,6 @@ jobs:
         run: |
           npx tsx server.ts > /tmp/remarcal-ci.log 2>&1 &
           echo $! > /tmp/remarcal-ci.pid
-          sleep 4
 
       - name: Smoke healthcheck
         run: npm run smoke
