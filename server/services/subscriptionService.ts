@@ -538,29 +538,39 @@ export class SubscriptionService {
         rangeEnd: rangeEnd.toISOString(),
       });
 
-      db.prepare(`
-        UPDATE calendar_subscriptions
-        SET last_fetched_at = ?,
-            last_success_at = ?,
-            last_error = NULL,
-            last_etag = ?,
-            last_modified = ?,
-            last_body_hash = ?
-        WHERE id = ?
-      `).run(
-        nowIso,
-        nowIso,
-        (response.headers.etag as string | undefined) || sub.last_etag || null,
-        (response.headers['last-modified'] as string | undefined) || sub.last_modified || null,
-        hash,
-        subscriptionId,
-      );
+      const newEtag = (response.headers.etag as string | undefined) || sub.last_etag || null;
+      const newModified = (response.headers['last-modified'] as string | undefined) || sub.last_modified || null;
 
-      // Fast path when body hash didn't change and no explicit range sync was requested.
-      // When an explicit window is requested (document-year sync), we still expand again so
-      // newly requested ranges get materialized even if ICS body is unchanged.
-      if (!explicitWindow && sub.last_body_hash && sub.last_body_hash === hash) {
-        return;
+      if (explicitWindow) {
+        // Explicit window fetches (e.g. PDF generation) must NOT advance last_body_hash.
+        // If they did, the next non-explicit poller cycle would see a matching hash and
+        // fast-path past the global delete – leaving stale events outside the explicit
+        // window alive even though they were removed from the feed.
+        db.prepare(`
+          UPDATE calendar_subscriptions
+          SET last_fetched_at = ?,
+              last_success_at = ?,
+              last_error = NULL,
+              last_etag = ?,
+              last_modified = ?
+          WHERE id = ?
+        `).run(nowIso, nowIso, newEtag, newModified, subscriptionId);
+      } else {
+        db.prepare(`
+          UPDATE calendar_subscriptions
+          SET last_fetched_at = ?,
+              last_success_at = ?,
+              last_error = NULL,
+              last_etag = ?,
+              last_modified = ?,
+              last_body_hash = ?
+          WHERE id = ?
+        `).run(nowIso, nowIso, newEtag, newModified, hash, subscriptionId);
+
+        // Fast path: body unchanged on a non-explicit fetch → nothing to do.
+        if (sub.last_body_hash && sub.last_body_hash === hash) {
+          return;
+        }
       }
 
       const parsed = ICAL.parse(body);

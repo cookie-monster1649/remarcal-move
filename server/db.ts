@@ -144,6 +144,26 @@ export function initDb() {
 
     CREATE INDEX IF NOT EXISTS idx_subscription_events_subscription_start
       ON subscription_events(subscription_id, start_at);
+
+    CREATE TABLE IF NOT EXISTS caldav_events (
+      account_id TEXT NOT NULL,
+      calendar_url TEXT NOT NULL,
+      uid TEXT NOT NULL,
+      recurrence_id TEXT NOT NULL DEFAULT '',
+      summary TEXT,
+      start_at TEXT NOT NULL,
+      end_at TEXT NOT NULL,
+      location TEXT,
+      description TEXT,
+      all_day INTEGER DEFAULT 0,
+      timezone TEXT,
+      last_seen_at TEXT NOT NULL,
+      PRIMARY KEY (account_id, calendar_url, uid, recurrence_id),
+      FOREIGN KEY (account_id) REFERENCES caldav_accounts(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_caldav_events_account_start
+      ON caldav_events(account_id, start_at);
   `);
 
   // Migrations: Add columns if they don't exist
@@ -360,6 +380,32 @@ export function initDb() {
     } finally {
       db.exec('PRAGMA foreign_keys = ON');
     }
+  }
+
+  const caldavEventsTableInfo = db.prepare("PRAGMA table_info(caldav_events)").all() as any[];
+  if (caldavEventsTableInfo.length === 0) {
+    console.log('Migrating: creating caldav_events table');
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS caldav_events (
+        account_id TEXT NOT NULL,
+        calendar_url TEXT NOT NULL,
+        uid TEXT NOT NULL,
+        recurrence_id TEXT NOT NULL DEFAULT '',
+        summary TEXT,
+        start_at TEXT NOT NULL,
+        end_at TEXT NOT NULL,
+        location TEXT,
+        description TEXT,
+        all_day INTEGER DEFAULT 0,
+        timezone TEXT,
+        last_seen_at TEXT NOT NULL,
+        PRIMARY KEY (account_id, calendar_url, uid, recurrence_id),
+        FOREIGN KEY (account_id) REFERENCES caldav_accounts(id) ON DELETE CASCADE
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_caldav_events_account_start
+        ON caldav_events(account_id, start_at);
+    `);
   }
 
   // Cleanup: Reset transient in-progress statuses left by crashes/restarts.
