@@ -19,6 +19,8 @@ export interface CalendarEvent {
   description?: string;
   allDay?: boolean;
   timezone?: string;
+  uid?: string;
+  recurrenceId?: string;
 }
 
 export interface CalendarInfo {
@@ -276,6 +278,10 @@ export class CalDavService {
               calendarTimezone = eventTz;
             }
 
+            const uid = vevent.getFirstPropertyValue('uid') as string | null;
+            const recurrenceIdProp = vevent.getFirstPropertyValue('recurrence-id');
+            const recurrenceId = recurrenceIdProp != null ? String(recurrenceIdProp) : undefined;
+
             events.push({
               summary,
               start: startDate,
@@ -283,7 +289,9 @@ export class CalDavService {
               location,
               description,
               allDay: isAllDay,
-              timezone: eventTz
+              timezone: eventTz,
+              uid: uid || undefined,
+              recurrenceId,
             });
           }
         } catch (e) {

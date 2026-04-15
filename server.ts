@@ -6,6 +6,7 @@ import { initDb } from './server/db.js';
 import { initEncryption } from './server/services/encryptionService.js';
 import { connectionSyncService } from './server/services/connectionSyncService.js';
 import { subscriptionPollerService } from './server/services/subscriptionPollerService.js';
+import { caldavPollerService } from './server/services/caldavPollerService.js';
 import libraryRoutes from './server/routes/library.js';
 import settingsRoutes from './server/routes/settings.js';
 import devicesRoutes from './server/routes/devices.js';
@@ -42,6 +43,7 @@ async function startServer() {
     initDb();
     connectionSyncService.start();
     subscriptionPollerService.start();
+    caldavPollerService.start();
   } catch (err: any) {
     console.error('Failed to initialize application:', err.message);
     process.exit(1);

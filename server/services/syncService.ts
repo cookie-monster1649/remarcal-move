@@ -1,17 +1,16 @@
 import db from '../db.js';
-import { CalDavService } from './caldavService.js';
 import { PDFService } from './pdfService.js';
 import { SSHService } from './sshService.js';
 import { decrypt } from './encryptionService.js';
 import { sshKeyManager } from './sshKeyManager.js';
 import { subscriptionService } from './subscriptionService.js';
+import { caldavPollerService } from './caldavPollerService.js';
 import { deviceOperationService } from './deviceOperationService.js';
 import { infoLogService } from './infoLogService.js';
 import * as fs from 'fs';
 import * as path from 'path';
 import { traceConfig } from '../utils/traceConfig.js';
 
-const calDavService = new CalDavService();
 const pdfService = new PDFService();
 const DEFAULT_SYNC_OPERATION_TIMEOUT_MS = 3 * 60 * 1000;
 const cancelRequested = new Set<string>();
@@ -245,32 +244,33 @@ export class SyncService {
     const allEvents = [];
 
     for (const account of linkedAccounts) {
-      const password = decrypt(account.encrypted_password);
-      let selectedCalendars = [];
+      // Refresh the account's events for this document year, then read from DB.
+      // This mirrors the subscription pattern: fresh fetch → DB read → PDF render.
       try {
-        selectedCalendars = JSON.parse(account.selected_calendars || '[]');
-      } catch (e) {
-        console.warn('Failed to parse selected_calendars for account', account.id);
+        await caldavPollerService.fetchAccount(account.id, {
+          rangeStart: new Date(`${startDate}T00:00:00.000Z`),
+          rangeEnd: new Date(`${endDate}T23:59:59.999Z`),
+        });
+      } catch (err: any) {
+        console.warn(`Failed to refresh CalDAV account ${account.name}: ${err.message}`);
       }
 
-      const calendarUrls = selectedCalendars.length > 0
-        ? selectedCalendars.map((c: any) => c.url)
-        : [account.url];
+      const accountEvents = db.prepare(`
+        SELECT summary, start_at, end_at, location, description, all_day, timezone
+        FROM caldav_events
+        WHERE account_id = ? AND end_at >= ? AND start_at <= ?
+      `).all(account.id, `${startDate}T00:00:00.000Z`, `${endDate}T23:59:59.999Z`) as any[];
 
-      for (const url of calendarUrls) {
-        try {
-          const { events } = await calDavService.fetchEvents({
-            url,
-            username: account.username,
-            password: password,
-            startDate,
-            endDate
-          });
-
-          allEvents.push(...events);
-        } catch (err: any) {
-          console.warn(`Failed to fetch events for account ${account.name} calendar ${url}:`, err.message);
-        }
+      for (const event of accountEvents) {
+        allEvents.push({
+          summary: event.summary || 'Untitled Event',
+          start: new Date(event.start_at),
+          end: new Date(event.end_at),
+          location: event.location || undefined,
+          description: event.description || undefined,
+          allDay: !!event.all_day,
+          timezone: event.timezone || undefined,
+        });
       }
     }
 
