@@ -33,7 +33,7 @@ services:
       - BACKUP_MAX_COUNT=${BACKUP_MAX_COUNT:-5}
       - BACKUP_MAX_TOTAL_SIZE_GB=${BACKUP_MAX_TOTAL_SIZE_GB:-5}
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/api/health"]
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:3000/api/health"]
       interval: 30s
       timeout: 10s
       retries: 3
