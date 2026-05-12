@@ -650,10 +650,15 @@ export class SSHService {
               const contentLocal = path.join(path.dirname(localPdfPath), `${baseName}.content`);
 
               fs.writeFileSync(metaLocal, JSON.stringify(metadata));
-              fs.writeFileSync(contentLocal, JSON.stringify(content));
-
               await uploadFile(metaLocal, metaRemotePath);
-              await uploadFile(contentLocal, path.join(dirName, `${baseName}.content`));
+
+              // Only write .content on first sync — it stores the page UUID mapping that
+              // xochitl uses to locate .rm annotation files. Overwriting it on re-sync
+              // causes xochitl to regenerate UUIDs, orphaning all existing annotations.
+              if (isFirstSync) {
+                fs.writeFileSync(contentLocal, JSON.stringify(content));
+                await uploadFile(contentLocal, path.join(dirName, `${baseName}.content`));
+              }
             }
 
             if (backupEnabled) {
@@ -663,6 +668,27 @@ export class SSHService {
                 sftp.stat(remotePath, (statErr) => {
                   if (!statErr) sftp.rename(remotePath, backupPath, () => res());
                   else res();
+                });
+              });
+
+              // Rotate: keep only the 5 most recent backups, delete the rest.
+              const keepBackups = parseInt(process.env.SYNC_BACKUP_KEEP ?? '5', 10);
+              await new Promise<void>((res) => {
+                const backupGlob = `${remotePath}.bak.*`;
+                conn.exec(`ls -1t ${backupGlob} 2>/dev/null`, (execErr, stream) => {
+                  if (execErr) return res();
+                  let output = '';
+                  stream.on('data', (data: Buffer) => { output += data.toString(); });
+                  stream.on('close', () => {
+                    const allBackups = output.trim().split('\n').filter(Boolean);
+                    const toDelete = allBackups.slice(keepBackups);
+                    if (toDelete.length === 0) return res();
+                    const deleteCmd = toDelete.map(f => `rm -f "${f}"`).join(' && ');
+                    conn.exec(deleteCmd, (_delErr, delStream) => {
+                      delStream?.on('close', () => res());
+                      if (!delStream) res();
+                    });
+                  });
                 });
               });
             }
