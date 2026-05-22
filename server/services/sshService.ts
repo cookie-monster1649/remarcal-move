@@ -600,16 +600,8 @@ export class SSHService {
             await uploadFile(localPdfPath, tempPath, true);
 
             const localHash = crypto.createHash('sha256').update(fs.readFileSync(localPdfPath)).digest('hex');
-            const remoteHash = await new Promise<string>((res, rej) => {
-              conn.exec(`sha256sum ${tempPath}`, (execErr, stream) => {
-                if (execErr) return rej(execErr);
-                let output = '';
-                stream.on('data', (data: Buffer) => {
-                  output += data.toString();
-                });
-                stream.on('close', () => res(output.split(' ')[0]));
-              });
-            });
+            const hashOutput = await this.execCommand(conn, `sha256sum ${tempPath}`);
+            const remoteHash = hashOutput.split(' ')[0];
 
             if (remoteHash !== localHash) {
               throw new Error(`Hash mismatch: Local ${localHash} vs Remote ${remoteHash}`);
@@ -673,24 +665,17 @@ export class SSHService {
 
               // Rotate: keep only the 5 most recent backups, delete the rest.
               const keepBackups = parseInt(process.env.SYNC_BACKUP_KEEP ?? '5', 10);
-              await new Promise<void>((res) => {
-                const backupGlob = `${remotePath}.bak.*`;
-                conn.exec(`ls -1t ${backupGlob} 2>/dev/null`, (execErr, stream) => {
-                  if (execErr) return res();
-                  let output = '';
-                  stream.on('data', (data: Buffer) => { output += data.toString(); });
-                  stream.on('close', () => {
-                    const allBackups = output.trim().split('\n').filter(Boolean);
-                    const toDelete = allBackups.slice(keepBackups);
-                    if (toDelete.length === 0) return res();
-                    const deleteCmd = toDelete.map(f => `rm -f "${f}"`).join(' && ');
-                    conn.exec(deleteCmd, (_delErr, delStream) => {
-                      delStream?.on('close', () => res());
-                      if (!delStream) res();
-                    });
-                  });
-                });
-              });
+              try {
+                const lsOutput = await this.execCommand(conn, `ls -1t ${remotePath}.bak.* 2>/dev/null; true`);
+                const allBackups = lsOutput.trim().split('\n').filter(Boolean);
+                const toDelete = allBackups.slice(keepBackups);
+                if (toDelete.length > 0) {
+                  const deleteCmd = toDelete.map(f => `rm -f ${this.shellEscapeSingleArg(f)}`).join(' && ');
+                  await this.execCommand(conn, deleteCmd);
+                }
+              } catch {
+                // rotation failure is non-fatal
+              }
             }
 
             await new Promise<void>((res, rej) => {
@@ -701,13 +686,11 @@ export class SSHService {
             });
 
             if (isXochitl && isFirstSync) {
-              await new Promise<void>((res) => {
-                conn.exec('systemctl restart xochitl', (restartErr, stream) => {
-                  if (restartErr) console.warn('Failed to restart xochitl:', restartErr);
-                  stream?.on('close', () => res());
-                  if (!stream) res();
-                });
-              });
+              try {
+                await this.execCommand(conn, 'systemctl restart xochitl');
+              } catch (restartErr) {
+                console.warn('Failed to restart xochitl:', restartErr);
+              }
             }
 
             resolve();

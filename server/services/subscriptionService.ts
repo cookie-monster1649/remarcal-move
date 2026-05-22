@@ -5,6 +5,7 @@ import { fromZonedTime } from 'date-fns-tz';
 import db from '../db.js';
 import { decrypt } from './encryptionService.js';
 import { traceConfig } from '../utils/traceConfig.js';
+import { retryHttpRequest } from '../utils/httpRetry.js';
 
 type SubscriptionRow = {
   id: string;
@@ -513,14 +514,22 @@ export class SubscriptionService {
     const rangeEnd = window.rangeEnd ?? linkedWindow?.end ?? defaultWindow.end;
 
     try {
-      const response = await axios.get(url, {
-        responseType: 'text',
-        timeout: 30000,
-        maxContentLength: 10 * 1024 * 1024,
-        maxBodyLength: 10 * 1024 * 1024,
-        headers,
-        validateStatus: (status) => (status >= 200 && status < 300) || status === 304,
-      });
+      const response = await retryHttpRequest(
+        () => axios.get(url, {
+          responseType: 'text',
+          timeout: 30000,
+          maxContentLength: 10 * 1024 * 1024,
+          maxBodyLength: 10 * 1024 * 1024,
+          headers,
+          validateStatus: (status) => (status >= 200 && status < 300) || status === 304,
+        }),
+        {
+          onRetry: (err: any, attempt, delay) => {
+            const status = err?.response?.status ?? err?.code ?? 'network';
+            console.warn(`ICS GET retry ${attempt} for subscription ${subscriptionId} (after ${delay}ms) — ${status}`);
+          },
+        },
+      );
 
       if (response.status === 304) {
         db.prepare('UPDATE calendar_subscriptions SET last_fetched_at = ?, last_success_at = ?, last_error = NULL WHERE id = ?').run(nowIso, nowIso, subscriptionId);

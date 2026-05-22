@@ -119,8 +119,11 @@ export class SyncService {
       const raw = Math.floor((transferredBytes / totalBytes) * 100);
       const uploadPercent = Math.max(0, Math.min(100, raw));
       const overall = 65 + Math.floor(uploadPercent * 0.30); // map upload to 65-95%
+      // Always emit the final tick so the UI doesn't sit at 94% during the
+      // brief window between fastPut completing and the finalizing phase update.
+      const isFinal = transferredBytes >= totalBytes;
       const now = Date.now();
-      if (Math.abs(overall - lastPercent) < 2 && now - lastUpdateAt < 500) return;
+      if (!isFinal && Math.abs(overall - lastPercent) < 2 && now - lastUpdateAt < 500) return;
       lastPercent = overall;
       lastUpdateAt = now;
       this.setSyncState(docId, { status: 'syncing', phase: 'uploading', progress: overall, error: null });
