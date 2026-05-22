@@ -28,6 +28,13 @@ This project was built entirely with AI assistance.
 - **Dockerized**: Easy deployment with Docker Compose.
 - **Persistence**: All data stored in a single volume, including SQLite database, generated PDFs, logs, SSH keys, and backups.
 
+## Screenshots
+### Home
+![Library](assets/home.png)
+
+### Devices
+![Devices](assets/devices.png)
+
 ## Getting Started
 
 ### Prerequisites
