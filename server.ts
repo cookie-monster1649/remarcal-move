@@ -1,6 +1,5 @@
 import 'dotenv/config';
 import express from 'express';
-import { createServer as createViteServer } from 'vite';
 import cors from 'cors';
 import { initDb } from './server/db.js';
 import { initEncryption } from './server/services/encryptionService.js';
@@ -90,6 +89,7 @@ async function startServer() {
 
   // Vite middleware
   if (process.env.NODE_ENV !== 'production') {
+    const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: 'spa',

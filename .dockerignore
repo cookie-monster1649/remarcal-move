@@ -1,0 +1,9 @@
+node_modules
+dist
+dist-server
+.git
+.gitignore
+*.md
+.env*
+data-local-smoke
+.DS_Store

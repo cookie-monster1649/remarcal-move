@@ -440,7 +440,7 @@ export class SyncService {
           UPDATE documents
           SET sync_status = 'idle',
               sync_phase = 'done',
-              sync_progress = 100,
+              sync_progress = 0,
               last_synced_at = ?,
               last_error = NULL,
               updated_at = CURRENT_TIMESTAMP

@@ -6,7 +6,7 @@ COPY package*.json ./
 RUN npm ci
 
 COPY . .
-RUN npm run build
+RUN npm run build && npx tsc -p tsconfig.server.json
 
 FROM node:22-alpine
 
@@ -16,12 +16,9 @@ RUN apk add --no-cache openssh-client rsync su-exec
 
 COPY package*.json ./
 RUN npm ci --omit=dev
-RUN npm install -g tsx
 
 COPY --from=builder /app/dist ./dist
-COPY --from=builder /app/server ./server
-COPY --from=builder /app/server.ts ./server.ts
-COPY --from=builder /app/tsconfig.json ./tsconfig.json
+COPY --from=builder /app/dist-server ./dist-server
 
 # Create data directory (owned by root; entrypoint will chown at runtime)
 RUN mkdir -p /data/docs /data/logs
@@ -37,4 +34,4 @@ ENV SSH_KEYGEN_PATH=/usr/bin/ssh-keygen
 EXPOSE 3000
 
 ENTRYPOINT ["/entrypoint.sh"]
-CMD ["tsx", "server.ts"]
+CMD ["node", "dist-server/server.js"]
