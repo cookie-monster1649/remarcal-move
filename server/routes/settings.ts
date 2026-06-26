@@ -102,7 +102,7 @@ router.post('/', (req, res) => {
 // Update Account
 router.put('/:id', (req, res) => {
   const { id } = req.params;
-  
+
   try {
     if (!isObject(req.body)) {
       throw new ValidationError('Request body must be a JSON object');
@@ -114,21 +114,38 @@ router.put('/:id', (req, res) => {
     const password = optionalString(req.body.password, 'password');
     const selected_calendars = validateCalendars(req.body.selected_calendars, 'selected_calendars');
 
-    if (password) {
-      const encrypted_password = encrypt(password);
-      db.prepare(`
-        UPDATE caldav_accounts 
-        SET name = ?, url = ?, username = ?, encrypted_password = ?, selected_calendars = ?
-        WHERE id = ?
-      `).run(name, url, username, encrypted_password, JSON.stringify(selected_calendars || []), id);
-    } else {
-      db.prepare(`
-        UPDATE caldav_accounts 
-        SET name = ?, url = ?, username = ?, selected_calendars = ?
-        WHERE id = ?
-      `).run(name, url, username, JSON.stringify(selected_calendars || []), id);
+    const existing = db.prepare('SELECT url FROM caldav_accounts WHERE id = ?').get(id) as any;
+    if (!existing) {
+      return res.status(404).json({ error: 'Account not found' });
     }
-    
+
+    // When the server URL changes, saved calendar sub-URLs are invalid — clear
+    // them so the poller falls back to account.url on the next fetch, and
+    // delete stale cached events that can never be refreshed.
+    const urlChanged = url !== (existing as any).url;
+    const effectiveCalendars = urlChanged ? [] : selected_calendars;
+
+    db.transaction(() => {
+      if (password) {
+        const encrypted_password = encrypt(password);
+        db.prepare(`
+          UPDATE caldav_accounts
+          SET name = ?, url = ?, username = ?, encrypted_password = ?, selected_calendars = ?
+          WHERE id = ?
+        `).run(name, url, username, encrypted_password, JSON.stringify(effectiveCalendars), id);
+      } else {
+        db.prepare(`
+          UPDATE caldav_accounts
+          SET name = ?, url = ?, username = ?, selected_calendars = ?
+          WHERE id = ?
+        `).run(name, url, username, JSON.stringify(effectiveCalendars), id);
+      }
+
+      if (urlChanged) {
+        db.prepare('DELETE FROM caldav_events WHERE account_id = ?').run(id);
+      }
+    })();
+
     res.json({ message: 'Account updated' });
   } catch (err: any) {
     const error = getErrorMessage(err);
@@ -140,7 +157,10 @@ router.put('/:id', (req, res) => {
 router.delete('/:id', (req, res) => {
   const { id } = req.params;
   try {
-    db.prepare('DELETE FROM caldav_accounts WHERE id = ?').run(id);
+    db.transaction(() => {
+      db.prepare('UPDATE documents SET caldav_account_id = NULL WHERE caldav_account_id = ?').run(id);
+      db.prepare('DELETE FROM caldav_accounts WHERE id = ?').run(id);
+    })();
     res.json({ message: 'Account deleted' });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
