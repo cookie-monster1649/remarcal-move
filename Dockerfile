@@ -12,10 +12,12 @@ FROM node:22-alpine
 
 WORKDIR /app
 
-RUN apk add --no-cache openssh-client rsync su-exec
+RUN apk upgrade --no-cache && apk add --no-cache openssh-client rsync su-exec
 
 COPY package*.json ./
 RUN npm ci --omit=dev
+
+RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
 
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/dist-server ./dist-server
